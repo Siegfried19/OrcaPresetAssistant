@@ -1,0 +1,71 @@
+{
+  "name": "bambu-preset-dashboard",
+  "version": "0.3.0",
+  "private": true,
+  "packageManager": "pnpm@11.9.0",
+  "description": "A local engineering dashboard for Bambu Studio presets and print evidence.",
+  "main": "out/main/index.js",
+  "author": "Bowen",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "lint": "eslint .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "quality": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test",
+    "package:win": "pnpm quality && electron-vite build && electron-builder --win portable"
+  },
+  "dependencies": {
+    "lucide-react": "1.27.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "26.1.2",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.2.0",
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3",
+    "electron-vite": "5.0.0",
+    "eslint": "10.8.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.8.0",
+    "prettier": "3.9.6",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.65.0",
+    "vite": "7.3.6",
+    "vitest": "4.1.10"
+  },
+  "build": {
+    "appId": "com.bowen.bambu-preset-dashboard",
+    "productName": "Bambu Preset Dashboard",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.svg",
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "BambuPresetDashboard-${version}-portable.${ext}"
+    },
+    "portable": {
+      "artifactName": "BambuPresetDashboard-${version}-portable.${ext}",
+      "requestExecutionLevel": "user"
+    }
+  }
+}

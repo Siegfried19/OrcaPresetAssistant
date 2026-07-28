@@ -1,0 +1,11 @@
+node_modules/
+.tsbuild/
+out/
+release/
+coverage/
+*.log
+.DS_Store
+.idea/
+.vscode/
+/BambuPresetDashboard.exe
+/BambuPresetDashboard-*-portable.exe
