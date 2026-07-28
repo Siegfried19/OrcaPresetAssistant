@@ -12,5 +12,6 @@ describe('translations', () => {
     const english = createTranslator('en')
     expect(english('kind.process')).toBe('Process')
     expect(english('kind.filament')).toBe('Material')
+    expect(english('materialRole.support-interface')).toBe('Support interface')
   })
 })

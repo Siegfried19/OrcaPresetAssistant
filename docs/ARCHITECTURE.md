@@ -42,6 +42,8 @@ Renderer 启用了 sandbox、context isolation，并关闭 Node integration。�
 - 一次写入一个完整 JSON 对象；
 - 路径使用预设仓库内的相对路径；
 - 同时存 SHA-256 与自定义 JSON 快照；
+- schema v2 为每个材料快照记录模型、支撑主体、支撑界面或其他用途；
+- 读取层继续兼容未记录材料用途的 schema v1 事件；
 - 展示时重新计算 SHA-256，区分“当前版本证据”和“旧参数版本证据”。
 
 应用自己的根目录配置写入 Electron `userData/config.json`，不污染 Bambu 目录。

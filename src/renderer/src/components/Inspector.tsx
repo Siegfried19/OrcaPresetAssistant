@@ -11,7 +11,7 @@ import {
 import type { PresetView } from '@shared/contracts'
 
 import { useI18n } from '../i18n/I18nProvider'
-import { validationTranslationKey } from '../i18n/messages'
+import { materialRoleTranslationKey, validationTranslationKey } from '../i18n/messages'
 import { formatDate } from '../lib/format'
 import { GitBadge, KindBadge, ResultBadge } from './Badges'
 
@@ -88,6 +88,21 @@ export function Inspector({ preset, onShowDiff, onRecord }: InspectorProps): Rea
             <div className="evidence-card">
               <div className="evidence-date">
                 {formatDate(preset.latestPrint.printedAt, language, t)}
+              </div>
+              <div className="evidence-materials">
+                <span>
+                  {t('inspector.materialComposition', {
+                    count: preset.latestPrint.materials.length,
+                  })}
+                </span>
+                <div>
+                  {preset.latestPrint.materials.map((material, index) => (
+                    <div className="evidence-material" key={`${material.name}-${index}`}>
+                      <strong>{material.name}</strong>
+                      <small>{t(materialRoleTranslationKey(material.role))}</small>
+                    </div>
+                  ))}
+                </div>
               </div>
               <p>{preset.latestPrint.note || t('inspector.noNote')}</p>
               <div

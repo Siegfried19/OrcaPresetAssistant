@@ -979,6 +979,51 @@
   line-height: 1.55;
 }
 
+.evidence-materials {
+  margin-top: 11px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--bg-solid) 68%, transparent);
+}
+
+.evidence-materials > span {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--text-tertiary);
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.evidence-materials > div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.evidence-material {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.evidence-material strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 9.5px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evidence-material small {
+  flex: 0 0 auto;
+  color: var(--purple);
+  font-size: 8.5px;
+  font-weight: 600;
+}
+
 .version-state {
   display: flex;
   gap: 6px;
@@ -1236,6 +1281,82 @@
 .material-option small {
   color: var(--text-tertiary);
   font-size: 8.5px;
+}
+
+.material-assignments {
+  display: flex;
+  margin-top: 2px;
+  padding: 10px;
+  flex-direction: column;
+  gap: 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-subtle) 72%, transparent);
+}
+
+.material-assignments-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px 2px;
+}
+
+.material-assignments-heading strong {
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.material-assignments-heading span {
+  color: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.material-assignments-heading span.is-multi {
+  color: var(--purple);
+  font-weight: 650;
+}
+
+.material-assignment {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) minmax(132px, 0.55fr);
+  gap: 9px;
+  align-items: center;
+  min-height: 38px;
+  padding: 5px 6px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--bg-solid) 72%, transparent);
+}
+
+.material-order {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  color: var(--accent);
+  border-radius: 6px;
+  background: var(--accent-soft);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.material-assignment-name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.material-role-select select {
+  height: 30px;
+  padding-right: 30px;
+  font-size: 9.5px;
+}
+
+.material-role-select svg {
+  right: 9px;
 }
 
 .result-segmented {

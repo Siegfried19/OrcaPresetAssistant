@@ -2,6 +2,7 @@ import type {
   DiffStats,
   GitState,
   LatestPrintView,
+  MaterialRole,
   PresetKind,
   RootSource,
   ValidationIssue,
@@ -44,8 +45,7 @@ export interface PrintSnapshot {
   readonly custom_json: JsonRecord
 }
 
-export interface PrintEvent {
-  readonly schema_version: 1
+interface PrintEventBase {
   readonly type: 'print'
   readonly id: string
   readonly printed_at: string
@@ -53,5 +53,21 @@ export interface PrintEvent {
   readonly result: 'success' | 'issue' | 'failed'
   readonly note: string
   readonly process: PrintSnapshot
+}
+
+export interface PrintEventV1 extends PrintEventBase {
+  readonly schema_version: 1
   readonly filaments: readonly PrintSnapshot[]
 }
+
+export interface PrintMaterialSnapshot {
+  readonly role: MaterialRole
+  readonly preset: PrintSnapshot
+}
+
+export interface PrintEventV2 extends PrintEventBase {
+  readonly schema_version: 2
+  readonly materials: readonly PrintMaterialSnapshot[]
+}
+
+export type PrintEvent = PrintEventV1 | PrintEventV2

@@ -1,7 +1,14 @@
 import { Check, ChevronDown, FlaskConical, Layers3, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
-import type { PresetView, PrintResult, RecordPrintRequest } from '@shared/contracts'
+import { MATERIAL_ROLES } from '@shared/contracts'
+import type {
+  MaterialAssignment,
+  MaterialRole,
+  PresetView,
+  PrintResult,
+  RecordPrintRequest,
+} from '@shared/contracts'
 
 import { useI18n } from '../i18n/I18nProvider'
 
@@ -30,8 +37,8 @@ export function RecordPrintSheet({
   const [processId, setProcessId] = useState(
     selectedPreset?.kind === 'process' ? selectedPreset.id : (processPresets[0]?.id ?? ''),
   )
-  const [filamentIds, setFilamentIds] = useState<string[]>(
-    selectedPreset?.kind === 'filament' ? [selectedPreset.id] : [],
+  const [materials, setMaterials] = useState<MaterialAssignment[]>(
+    selectedPreset?.kind === 'filament' ? [{ presetId: selectedPreset.id, role: 'model' }] : [],
   )
   const [result, setResult] = useState<PrintResult>('success')
   const [note, setNote] = useState('')
@@ -47,8 +54,19 @@ export function RecordPrintSheet({
   }, [onClose, saving])
 
   const toggleFilament = (id: string): void => {
-    setFilamentIds((current) =>
-      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+    setMaterials((current) => {
+      if (current.some((material) => material.presetId === id)) {
+        return current.filter((material) => material.presetId !== id)
+      }
+      return [...current, { presetId: id, role: current.length === 0 ? 'model' : 'other' }]
+    })
+  }
+
+  const setMaterialRole = (presetId: string, role: MaterialRole): void => {
+    setMaterials((current) =>
+      current.map((material) =>
+        material.presetId === presetId ? { ...material, role } : material,
+      ),
     )
   }
 
@@ -58,7 +76,7 @@ export function RecordPrintSheet({
       setFormError(t('record.processRequired'))
       return
     }
-    if (filamentIds.length === 0) {
+    if (materials.length === 0) {
       setFormError(t('record.filamentRequired'))
       return
     }
@@ -66,7 +84,7 @@ export function RecordPrintSheet({
     setSaving(true)
     setFormError(null)
     try {
-      await onSave({ processId, filamentIds, result, note })
+      await onSave({ processId, materials, result, note })
       onClose()
     } catch {
       setFormError(t('record.saveFailed'))
@@ -131,7 +149,7 @@ export function RecordPrintSheet({
             </legend>
             <div className="material-options">
               {filamentPresets.map((preset) => {
-                const checked = filamentIds.includes(preset.id)
+                const checked = materials.some((material) => material.presetId === preset.id)
                 return (
                   <button
                     aria-pressed={checked}
@@ -151,6 +169,49 @@ export function RecordPrintSheet({
                 )
               })}
             </div>
+            {materials.length > 0 && (
+              <div className="material-assignments">
+                <div className="material-assignments-heading">
+                  <strong>{t('record.materialRoles')}</strong>
+                  <span className={materials.length > 1 ? 'is-multi' : ''}>
+                    {materials.length > 1
+                      ? t('record.multiMaterial', { count: materials.length })
+                      : t('record.singleMaterial')}
+                  </span>
+                </div>
+                {materials.map((material, index) => {
+                  const preset = filamentPresets.find(
+                    (candidate) => candidate.id === material.presetId,
+                  )
+                  if (!preset) return null
+
+                  return (
+                    <div className="material-assignment" key={material.presetId}>
+                      <span className="material-order">{index + 1}</span>
+                      <span className="material-assignment-name" title={preset.name}>
+                        {preset.name}
+                      </span>
+                      <div className="select-wrap material-role-select">
+                        <select
+                          aria-label={t('record.roleFor', { name: preset.name })}
+                          onChange={(event) =>
+                            setMaterialRole(preset.id, event.target.value as MaterialRole)
+                          }
+                          value={material.role}
+                        >
+                          {MATERIAL_ROLES.map((role) => (
+                            <option key={role} value={role}>
+                              {t(`materialRole.${role}`)}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown aria-hidden="true" size={14} />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </fieldset>
 
           <fieldset className="form-group">

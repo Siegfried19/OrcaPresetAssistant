@@ -1,4 +1,9 @@
-import type { AppErrorCode, DashboardWarning, ValidationIssue } from '@shared/contracts'
+import type {
+  AppErrorCode,
+  DashboardWarning,
+  RecordedMaterialRole,
+  ValidationIssue,
+} from '@shared/contracts'
 
 const zhCN = {
   'language.label': '界面语言',
@@ -82,6 +87,7 @@ const zhCN = {
   'inspector.notRead': '未读取到',
   'inspector.fileModified': '文件修改',
   'inspector.latestPrint': '最近打印',
+  'inspector.materialComposition': '材料组合 · {count}',
   'inspector.noNote': '这次打印没有附加备注。',
   'inspector.currentVersion': '结果属于当前参数版本',
   'inspector.staleVersion': '打印后参数已发生变化',
@@ -94,6 +100,15 @@ const zhCN = {
   'record.filament': '材料预设',
   'record.multiple': '可多选',
   'record.customMaterial': '自定义材料',
+  'record.materialRoles': '材料分工',
+  'record.singleMaterial': '单材料打印',
+  'record.multiMaterial': '多材料打印 · {count} 种',
+  'record.roleFor': '{name} 的材料用途',
+  'materialRole.model': '模型',
+  'materialRole.support-base': '支撑主体',
+  'materialRole.support-interface': '支撑界面',
+  'materialRole.other': '其他',
+  'materialRole.unspecified': '用途未记录',
   'record.result': '结果',
   'record.note': '一句话备注',
   'record.notePlaceholder': '例如：左后角轻微翘曲，表面和尺寸正常',
@@ -126,6 +141,7 @@ const zhCN = {
   'error.note-too-long': '备注不能超过 2000 个字符。',
   'error.filament-required': '请至少选择一个材料预设。',
   'error.duplicate-filament': '材料预设不能重复。',
+  'error.invalid-material-role': '材料用途无效，请重新选择。',
   'error.invalid-process': '请选择有效的工艺预设。',
   'error.filament-not-found': '选择的材料预设已经移动或不存在。',
   'warning.git-unavailable': '当前预设目录未连接 Git，修改历史将显示为未知。',
@@ -226,6 +242,7 @@ const en: MessageCatalog = {
   'inspector.notRead': 'Not available',
   'inspector.fileModified': 'File Modified',
   'inspector.latestPrint': 'Latest Print',
+  'inspector.materialComposition': 'Material composition · {count}',
   'inspector.noNote': 'No note was added to this print.',
   'inspector.currentVersion': 'Result belongs to the current parameter version',
   'inspector.staleVersion': 'Parameters changed after this print',
@@ -240,6 +257,15 @@ const en: MessageCatalog = {
   'record.filament': 'Material Presets',
   'record.multiple': 'Multiple allowed',
   'record.customMaterial': 'Custom material',
+  'record.materialRoles': 'Material Roles',
+  'record.singleMaterial': 'Single-material print',
+  'record.multiMaterial': 'Multi-material print · {count}',
+  'record.roleFor': 'Material role for {name}',
+  'materialRole.model': 'Model',
+  'materialRole.support-base': 'Support body',
+  'materialRole.support-interface': 'Support interface',
+  'materialRole.other': 'Other',
+  'materialRole.unspecified': 'Role not recorded',
   'record.result': 'Result',
   'record.note': 'Short note',
   'record.notePlaceholder': 'Example: slight lift at rear left; surface and dimensions are normal',
@@ -274,6 +300,7 @@ const en: MessageCatalog = {
   'error.note-too-long': 'The note cannot exceed 2,000 characters.',
   'error.filament-required': 'Choose at least one material preset.',
   'error.duplicate-filament': 'A material preset cannot be selected twice.',
+  'error.invalid-material-role': 'The material role is invalid. Choose it again.',
   'error.invalid-process': 'Choose a valid process preset.',
   'error.filament-not-found': 'A selected material preset moved or no longer exists.',
   'warning.git-unavailable':
@@ -309,3 +336,5 @@ export const warningTranslationKey = (warning: DashboardWarning): TranslationKey
   `warning.${warning}`
 export const validationTranslationKey = (issue: ValidationIssue): TranslationKey =>
   `validation.${issue}`
+export const materialRoleTranslationKey = (role: RecordedMaterialRole): TranslationKey =>
+  `materialRole.${role}`

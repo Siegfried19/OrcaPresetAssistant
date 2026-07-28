@@ -1,6 +1,6 @@
 {
   "name": "bambu-preset-dashboard",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "packageManager": "pnpm@11.9.0",
   "description": "A local engineering dashboard for Bambu Studio presets and print evidence.",

@@ -1,9 +1,11 @@
 import { shell } from 'electron'
 
+import { MATERIAL_ROLES } from '@shared/contracts'
 import type {
   AppErrorCode,
   DashboardWarning,
   DashboardSnapshot,
+  MaterialRole,
   PresetDiff,
   PresetView,
   RecordPrintRequest,
@@ -107,16 +109,10 @@ export class DashboardService {
   }
 
   public async recordPrint(request: RecordPrintRequest): Promise<DashboardSnapshot> {
-    const { processPreset, filamentPresets } = this.validateRecordRequest(request)
+    const { processPreset, materials } = this.validateRecordRequest(request)
     if (!this.root) throw appError('preset-root-not-connected')
 
-    await appendPrintEvent(
-      this.root.path,
-      processPreset,
-      filamentPresets,
-      request.result,
-      request.note,
-    )
+    await appendPrintEvent(this.root.path, processPreset, materials, request.result, request.note)
     return (await this.refresh()).snapshot
   }
 
@@ -217,7 +213,10 @@ export class DashboardService {
 
   private validateRecordRequest(request: RecordPrintRequest): {
     processPreset: InternalPreset
-    filamentPresets: InternalPreset[]
+    materials: {
+      readonly preset: InternalPreset
+      readonly role: MaterialRole
+    }[]
   } {
     if (!isPrintResult(request.result)) {
       throw appError('invalid-print-result')
@@ -225,10 +224,22 @@ export class DashboardService {
     if (typeof request.note !== 'string' || request.note.length > 2_000) {
       throw appError('note-too-long')
     }
-    if (!Array.isArray(request.filamentIds) || request.filamentIds.length === 0) {
+    if (!Array.isArray(request.materials) || request.materials.length === 0) {
       throw appError('filament-required')
     }
-    if (new Set(request.filamentIds).size !== request.filamentIds.length) {
+    if (
+      !request.materials.every(
+        (material) =>
+          typeof material === 'object' &&
+          material !== null &&
+          typeof material.presetId === 'string' &&
+          MATERIAL_ROLES.some((role) => role === material.role),
+      )
+    ) {
+      throw appError('invalid-material-role')
+    }
+    const materialIds = request.materials.map((material) => material.presetId)
+    if (new Set(materialIds).size !== materialIds.length) {
       throw appError('duplicate-filament')
     }
 
@@ -237,14 +248,14 @@ export class DashboardService {
       throw appError('invalid-process')
     }
 
-    const filamentPresets = request.filamentIds.map((id) => {
-      const preset = this.presets.find((candidate) => candidate.id === id)
+    const materials = request.materials.map((material) => {
+      const preset = this.presets.find((candidate) => candidate.id === material.presetId)
       if (!preset || preset.kind !== 'filament') {
         throw appError('filament-not-found')
       }
-      return preset
+      return { preset, role: material.role }
     })
 
-    return { processPreset, filamentPresets }
+    return { processPreset, materials }
   }
 }

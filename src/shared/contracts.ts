@@ -12,6 +12,9 @@ export const IPC_CHANNELS = {
 export type PresetKind = 'process' | 'filament' | 'machine'
 export type GitState = 'new' | 'modified' | 'metadata' | 'clean' | 'unknown'
 export type PrintResult = 'success' | 'issue' | 'failed'
+export const MATERIAL_ROLES = ['model', 'support-base', 'support-interface', 'other'] as const
+export type MaterialRole = (typeof MATERIAL_ROLES)[number]
+export type RecordedMaterialRole = MaterialRole | 'unspecified'
 export type RootSource = 'automatic' | 'saved' | 'manual'
 export type Language = 'zh-CN' | 'en'
 export type ValidationIssue =
@@ -34,6 +37,7 @@ export type AppErrorCode =
   | 'note-too-long'
   | 'filament-required'
   | 'duplicate-filament'
+  | 'invalid-material-role'
   | 'invalid-process'
   | 'filament-not-found'
 
@@ -48,6 +52,12 @@ export interface LatestPrintView {
   readonly result: PrintResult
   readonly note: string
   readonly currentVersion: boolean
+  readonly materials: readonly LatestPrintMaterialView[]
+}
+
+export interface LatestPrintMaterialView {
+  readonly name: string
+  readonly role: RecordedMaterialRole
 }
 
 export interface PresetView {
@@ -90,9 +100,14 @@ export interface DashboardSnapshot {
 
 export interface RecordPrintRequest {
   readonly processId: string
-  readonly filamentIds: readonly string[]
+  readonly materials: readonly MaterialAssignment[]
   readonly result: PrintResult
   readonly note: string
+}
+
+export interface MaterialAssignment {
+  readonly presetId: string
+  readonly role: MaterialRole
 }
 
 export interface PresetDiff {

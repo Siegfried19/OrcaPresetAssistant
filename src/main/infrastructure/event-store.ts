@@ -1,12 +1,24 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { appendFile, mkdir, readFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, join, parse } from 'node:path'
 import { createInterface } from 'node:readline'
 
-import type { LatestPrintView, PrintResult } from '@shared/contracts'
+import { MATERIAL_ROLES } from '@shared/contracts'
+import type {
+  LatestPrintView,
+  MaterialRole,
+  PrintResult,
+  RecordedMaterialRole,
+} from '@shared/contracts'
 
-import type { InternalPreset, PrintEvent, PrintSnapshot } from '../domain/models'
+import type {
+  InternalPreset,
+  PrintEvent,
+  PrintEventV2,
+  PrintMaterialSnapshot,
+  PrintSnapshot,
+} from '../domain/models'
 
 function eventsPath(rootPath: string): string {
   return join(rootPath, 'engineering', 'events.jsonl')
@@ -41,24 +53,48 @@ function isPrintSnapshot(value: unknown): value is PrintSnapshot {
   )
 }
 
-function parseEvent(value: unknown): PrintEvent | null {
+function isMaterialRole(value: unknown): value is MaterialRole {
+  return MATERIAL_ROLES.some((role) => role === value)
+}
+
+function isPrintMaterialSnapshot(value: unknown): value is PrintMaterialSnapshot {
+  if (typeof value !== 'object' || value === null) return false
+  const record = value as Record<string, unknown>
+  return isMaterialRole(record.role) && isPrintSnapshot(record.preset)
+}
+
+export function parsePrintEvent(value: unknown): PrintEvent | null {
   if (typeof value !== 'object' || value === null) return null
   const record = value as Record<string, unknown>
   if (
-    record.schema_version !== 1 ||
     record.type !== 'print' ||
     typeof record.id !== 'string' ||
     typeof record.printed_at !== 'string' ||
     !isPrintResult(record.result) ||
     typeof record.note !== 'string' ||
-    !isPrintSnapshot(record.process) ||
-    !Array.isArray(record.filaments) ||
-    !record.filaments.every(isPrintSnapshot)
+    !isPrintSnapshot(record.process)
   ) {
     return null
   }
 
-  return value as PrintEvent
+  if (
+    record.schema_version === 1 &&
+    Array.isArray(record.filaments) &&
+    record.filaments.every(isPrintSnapshot)
+  ) {
+    return value as PrintEvent
+  }
+
+  if (
+    record.schema_version === 2 &&
+    Array.isArray(record.materials) &&
+    record.materials.length > 0 &&
+    record.materials.every(isPrintMaterialSnapshot)
+  ) {
+    return value as PrintEvent
+  }
+
+  return null
 }
 
 async function readEvents(rootPath: string): Promise<PrintEvent[]> {
@@ -80,7 +116,7 @@ async function readEvents(rootPath: string): Promise<PrintEvent[]> {
     for await (const line of lines) {
       if (!line.trim()) continue
       try {
-        const event = parseEvent(JSON.parse(line))
+        const event = parsePrintEvent(JSON.parse(line))
         if (event) events.push(event)
       } catch {
         // Keep valid evidence readable even if one manually edited line is malformed.
@@ -91,6 +127,21 @@ async function readEvents(rootPath: string): Promise<PrintEvent[]> {
   }
 
   return events
+}
+
+interface EventMaterial {
+  readonly role: RecordedMaterialRole
+  readonly preset: PrintSnapshot
+}
+
+function eventMaterials(event: PrintEvent): readonly EventMaterial[] {
+  if (event.schema_version === 2) return event.materials
+  return event.filaments.map((preset) => ({ role: 'unspecified', preset }))
+}
+
+function snapshotName(snapshot: PrintSnapshot): string {
+  const name = snapshot.custom_json.name
+  return typeof name === 'string' && name.trim() ? name : parse(snapshot.path).name
 }
 
 async function snapshotIsCurrent(rootPath: string, snapshot: PrintSnapshot): Promise<boolean> {
@@ -109,7 +160,8 @@ export async function applyLatestPrints(
   const events = await readEvents(rootPath)
 
   for (const event of events) {
-    const snapshots = [event.process, ...event.filaments]
+    const materials = eventMaterials(event)
+    const snapshots = [event.process, ...materials.map((material) => material.preset)]
     const currentVersion = (
       await Promise.all(snapshots.map((snapshot) => snapshotIsCurrent(rootPath, snapshot)))
     ).every(Boolean)
@@ -119,6 +171,10 @@ export async function applyLatestPrints(
       result: event.result,
       note: event.note,
       currentVersion,
+      materials: materials.map((material) => ({
+        name: snapshotName(material.preset),
+        role: material.role,
+      })),
     }
 
     for (const snapshot of snapshots) {
@@ -131,12 +187,15 @@ export async function applyLatestPrints(
 export async function appendPrintEvent(
   rootPath: string,
   processPreset: InternalPreset,
-  filamentPresets: readonly InternalPreset[],
+  materials: readonly {
+    readonly preset: InternalPreset
+    readonly role: MaterialRole
+  }[],
   result: PrintResult,
   note: string,
 ): Promise<void> {
-  const event: PrintEvent = {
-    schema_version: 1,
+  const event: PrintEventV2 = {
+    schema_version: 2,
     type: 'print',
     id: randomUUID(),
     printed_at: new Date().toISOString(),
@@ -144,7 +203,12 @@ export async function appendPrintEvent(
     result,
     note: note.trim(),
     process: await createSnapshot(processPreset),
-    filaments: await Promise.all(filamentPresets.map(createSnapshot)),
+    materials: await Promise.all(
+      materials.map(async (material) => ({
+        role: material.role,
+        preset: await createSnapshot(material.preset),
+      })),
+    ),
   }
 
   const path = eventsPath(rootPath)

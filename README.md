@@ -22,16 +22,16 @@ Bambu Preset Dashboard 把预设身份、Git 状态和打印证据放在同一�
 
 ### 主要能力
 
-| 能力       | 说明                                                           |
-| ---------- | -------------------------------------------------------------- |
-| 预设总览   | 自动读取 `process/`、`filament/` 和 `machine/` 中的用户预设    |
-| Git 可见性 | 区分新增、参数修改、仅 Bambu 元数据变化和已同步状态            |
-| 结构检查   | 检查文件名、内部名称、settings ID 和配套 `.info` 是否一致      |
-| 打印证据   | 一次选择工艺、一个或多个材料、结果与备注，并绑定当时的参数快照 |
-| 版本判断   | 参数改变后，自动标记旧打印结果不再对应当前版本                 |
-| 中英文界面 | 标题栏一键切换中文 / English，并在本机记住选择                 |
-| 即开即用   | 提供 Windows x64 便携版本，无需安装 Node.js 或 Python          |
-| 系统主题   | 自动跟随 Windows 的浅色或深色模式                              |
+| 能力       | 说明                                                        |
+| ---------- | ----------------------------------------------------------- |
+| 预设总览   | 自动读取 `process/`、`filament/` 和 `machine/` 中的用户预设 |
+| Git 可见性 | 区分新增、参数修改、仅 Bambu 元数据变化和已同步状态         |
+| 结构检查   | 检查文件名、内部名称、settings ID 和配套 `.info` 是否一致   |
+| 打印证据   | 记录工艺、材料分工、结果与备注，并绑定当时的参数快照        |
+| 版本判断   | 参数改变后，自动标记旧打印结果不再对应当前版本              |
+| 中英文界面 | 标题栏一键切换中文 / English，并在本机记住选择              |
+| 即开即用   | 提供 Windows x64 便携版本，无需安装 Node.js 或 Python       |
+| 系统主题   | 自动跟随 Windows 的浅色或深色模式                           |
 
 ### 快速开始
 
@@ -68,11 +68,12 @@ engineering/events.jsonl
 每一行都是独立的 UTF-8 JSON 事件，包含：
 
 - 打印时间、结果和备注；
-- 工艺与材料的相对路径；
+- 工艺与材料的相对路径，以及模型、支撑主体、支撑界面等材料分工；
 - 当时 JSON 文件的 SHA-256；
 - 当时的自定义参数快照。
 
-这是追加式记录：后续参数变化或结论修正不会覆盖旧实验。
+这是追加式记录：后续参数变化或结论修正不会覆盖旧实验。新的记录使用带材料角色的
+schema v2，软件仍可读取早期没有记录材料用途的 schema v1 事件。
 
 ### 数据与安全边界
 
@@ -189,6 +190,7 @@ It answers three practical questions in one view:
 - Separate Git states for parameter changes and Bambu-only metadata churn
 - Preset identity validation for filenames, internal IDs, and matching `.info` files
 - Append-only print evidence linked to SHA-256 parameter snapshots
+- Single- and multi-material print composition with explicit material roles
 - Persistent Chinese / English interface
 - System light and dark themes
 - Portable Windows x64 build
