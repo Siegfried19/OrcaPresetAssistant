@@ -1,225 +1,128 @@
-# Bambu Preset Dashboard
+# Orca Preset Assistant
 
-> 面向 Bambu Studio 自定义工艺与材料预设的本地工程记录面板。<br>
-> A local engineering dashboard for Bambu Studio presets and print evidence.
+Orca Preset Assistant 是嵌入 OrcaSlicer 主窗口的用户预设与打印历史工作台。日常使用只需要 Orca 和 Codex 两个窗口：Orca 继续负责模型、切片、设备和打印，助手面板负责预设审阅、受控写入与打印结果归档。
 
-[中文](#中文) · [English](#english)
+> 当前状态：Windows 早期预览版。核心流程和自动化测试已经建立，真实打印、不同显示缩放和 Orca 升级兼容仍需持续验证。公开稳定安装包尚未发布。
 
-![Bambu Preset Dashboard 中文界面](docs/images/dashboard-zh.png)
+![Orca Preset Assistant 中文界面](./docs/images/dashboard-zh.png)
 
-## 中文
+English summary: Orca Preset Assistant embeds a preset and print-history workspace in OrcaSlicer. Codex can inspect the current project only with explicit permission, while Orca remains the authority for applying preset changes.
 
-### 为什么做这个工具
+## 产品范围
 
-当自定义工艺和材料越来越多，仅靠 Bambu Studio 的预设列表很难快速回答这些问题：
+面板只有两个一级页面：
 
-- 我现在有哪些自定义工艺和材料？
-- 哪些参数相对上一次 Git 记录发生了变化？
-- 最近一次实物打印使用的是不是当前参数版本？
-- 某个结论来自实际打印，还是仍然只是待验证假设？
+- **用户自定义预设**：查看 machine、process、filament 用户预设，审阅 Codex 参数提案，并明确选择写入位置。
+- **打印历史**：自动或手动保存打印档案，记录实际有效参数，并在打印后补写结果和备注。
 
-Bambu Preset Dashboard 把预设身份、Git 状态和打印证据放在同一个只读视图中，减少在 Bambu Studio、文件资源管理器、GitHub Desktop 和实验笔记之间来回切换的操作摩擦。
-
-### 主要能力
-
-| 能力       | 说明                                                        |
-| ---------- | ----------------------------------------------------------- |
-| 预设总览   | 自动读取 `process/`、`filament/` 和 `machine/` 中的用户预设 |
-| Git 可见性 | 区分新增、参数修改、仅 Bambu 元数据变化和已同步状态         |
-| 结构检查   | 检查文件名、内部名称、settings ID 和配套 `.info` 是否一致   |
-| 打印证据   | 记录工艺、材料分工、结果与备注，并绑定当时的参数快照        |
-| 版本判断   | 参数改变后，自动标记旧打印结果不再对应当前版本              |
-| 中英文界面 | 标题栏一键切换中文 / English，并在本机记住选择              |
-| 即开即用   | 提供 Windows x64 便携版本，无需安装 Node.js 或 Python       |
-| 系统主题   | 自动跟随 Windows 的浅色或深色模式                           |
-
-### 快速开始
-
-1. 从 [Releases](../../releases/latest) 下载最新的 `BambuPresetDashboard-*-portable.exe`。
-2. 双击运行，无需安装。
-3. 应用会自动搜索：
-
-   ```text
-   %APPDATA%\BambuStudio\user\*
-   ```
-
-4. 如果自动识别失败，在面板左下角选择一次用户预设目录。该路径会保存在应用自己的本地配置中，下次自动连接。
-
-> 软件仓库与预设仓库彼此独立。预设目录不需要固定在软件工程内，也不需要作为 Git submodule。
-
-### 面板如何理解 Git 状态
-
-- **新增**：JSON 还没有纳入当前预设仓库的 Git 历史。
-- **已修改**：预设 JSON 相对 `HEAD` 有参数差异，并显示增删行数。
-- **元数据**：JSON 没变，只有配套 `.info` 出现 Bambu 生成的身份或同步变化。
-- **已同步**：JSON 和 `.info` 均与当前 Git 记录一致。
-- **未知**：当前预设目录不是可读取的 Git 仓库。
-
-面板只负责显示状态，不会自动执行 `git add`、commit、push、pull 或 reset。
-
-### 打印记录
-
-只有在用户明确点击“保存打印记录”时，应用才会向所连接的预设仓库追加：
+首次使用时选择一个工作文件夹。程序只管理下面两个子文件夹：
 
 ```text
-engineering/events.jsonl
+<Workspace>\
+├─ UserPresets\
+│  ├─ machine\
+│  ├─ process\
+│  └─ filament\
+└─ PrintHistory\
 ```
 
-每一行都是独立的 UTF-8 JSON 事件，包含：
+官方 Orca 预设继续保留在 Orca 原有位置，不复制、不修改。
 
-- 打印时间、结果和备注；
-- 工艺与材料的相对路径，以及模型、支撑主体、支撑界面等材料分工；
-- 当时 JSON 文件的 SHA-256；
-- 当时的自定义参数快照。
+## 主要能力
 
-这是追加式记录：后续参数变化或结论修正不会覆盖旧实验。新的记录使用带材料角色的
-schema v2，软件仍可读取早期没有记录材料用途的 schema v1 事件。
+- 在 Orca 内查看当前工作区的三类用户预设。
+- 用“Orca 创建/管理”或“本地 JSON”标记预设来源；只有 JSON 的本地预设仍可正常使用。
+- 让 Codex 按授权级别读取通用状态、当前设置，或当前项目的零件摆放和模型几何。
+- 审批参数变化并选择“仅当前项目 / 更新当前永久预设 / 另存为新永久预设”。
+- 在没有后续冲突时回滚最近一次 Orca 写入。
+- 打印提交成功后自动建档，可选择是否保存当前项目 3MF 副本。
+- 打印完成后补写成功、问题、失败和备注。
+- Orca 原生标签跟随 Orca 语言；面板内容可独立切换中文或英文。
 
-### 数据与安全边界
+机器预设目前只读。Codex 自动写入只开放给 Orca 原生层明确验证过的 process / filament 参数白名单。
 
-- 预设 JSON 和 `.info` 始终只读。
-- 不修改 Bambu Studio 的系统预设。
-- 不自动提交或推送任何 Git 仓库。
-- 不上传预设、打印记录或本地路径到云端。
-- 只有保存打印记录是写操作，且目标固定为 `engineering/events.jsonl`。
-- Electron 渲染进程不启用 Node.js；桌面能力通过经过校验的窄 IPC 接口提供。
+## Bambu LAN Only 打印
 
-```mermaid
-flowchart LR
-    UI["React 界面"] --> IPC["经过校验的 IPC"]
-    IPC --> Core["Electron 主进程"]
-    Core --> Presets["Bambu 用户预设<br/>只读"]
-    Core --> Git["本地 Git<br/>只读"]
-    Core --> Events["engineering/events.jsonl<br/>仅明确保存时追加"]
+本项目的定制 Orca 没有 Bambu Lab 的应用签名。使用较新打印机固件时，普通授权模式会拒绝它直接发起打印，并可能返回 `-26`。如果你只使用 LAN Only：
+
+1. 在打印机屏幕进入 LAN Only 设置；
+2. 开启 LAN Only，并同时手动开启 **Developer Mode**；
+3. 回到 Orca，重新连接打印机后再发送打印。
+
+不需要安装 Bambu Connect。Developer Mode 会开放打印机的局域网接口，只应在可信的本地网络中使用；Bambu Lab 也说明该模式需要用户自行承担局域网安全责任。参考 [Bambu Lab 对 Developer Mode 的官方说明](https://blog.bambulab.com/updates-and-third-party-integration-with-bambu-connect/)。
+
+若发送仍显示 `-26`，先确认打印机上的 Developer Mode 仍为开启状态，再在 Orca 中断开并重新连接设备。本项目不会远程开启或关闭打印机的安全设置。
+
+## 权限与隐私
+
+Codex 默认只提供通用建议。用户可按会话选择：
+
+- 不读取当前项目；
+- 读取当前预设和有效参数；
+- 读取当前项目的零件摆放与 STL/3MF 几何。
+
+模型权限只覆盖当前 Orca 项目实际引用的文件，不扫描最近文件或其他目录。Orca 是项目状态与预设写入的唯一权威来源，面板不会手工生成云同步 `.info` 元数据，也不会直接覆盖官方预设。只有 JSON 的本地预设同样有效，不会因此显示结构异常。
+
+详细边界见 [TECHNICAL_SPEC.md](./TECHNICAL_SPEC.md) 和 [架构说明](./docs/ARCHITECTURE.md)。
+
+## 仓库结构
+
+本仓库包含产品需要维护的全部源码，不依赖旧的 Bambu 面板代码库。
+
+```text
+src/                         Electron/React 面板与本地 helper
+native/orca/                 针对固定 OrcaSlicer 基线的可审阅补丁
+plugins/orca-preset-assistant/
+                             Codex 插件源码
+docs/                        用户、架构、验证与发布文档
+tests/                       应用测试
 ```
 
-### 当前限制
+`FullVersion/`、`release/`、`node_modules/` 和编译输出不会进入 Git。公开二进制应通过 GitHub Releases 单独发布，并与对应源码版本关联。
 
-- 当前提供 Windows x64 便携版本。
-- 本版本不直接编辑预设参数。
-- 不嵌入或修改 Bambu Studio。
-- 不替代切片预览、实物验证或工程变更记录。
-- 打印记录由用户主动填写，不会自动读取打印机历史。
+## 本地开发
 
-### 本地开发
+要求：
 
-需要 Node.js 22+ 和 pnpm 11。
+- Windows 10/11
+- Node.js 22+
+- pnpm 11（仓库固定为 `pnpm@11.9.0`）
 
 ```powershell
-pnpm install
+pnpm install --frozen-lockfile
+pnpm quality
 pnpm dev
 ```
 
-完整质量检查：
+插件集成测试：
 
 ```powershell
-pnpm quality
+node --test `
+  plugins/orca-preset-assistant/server/model-inspector.test.mjs `
+  plugins/orca-preset-assistant/server/server.test.mjs
 ```
 
-质量检查包括 TypeScript、ESLint、Prettier 和 Vitest。
-
-生成 Windows 便携版本：
+生成独立 Windows 便携面板：
 
 ```powershell
 pnpm package:win
 ```
 
-产物位于 `release/`。也可以双击 `build.cmd` 执行相同的检查与打包流程。
+该便携程序主要用于界面预览和故障排查。完整日常体验需要把 helper 与原生补丁一起构建进 Orca；规则见 [原生补丁说明](./native/orca/README.md) 和 [打包说明](./native/orca/PACKAGING.md)。
 
-### 项目结构
+## 文档
 
-```text
-src/
-  main/
-    application/       用例编排与应用状态
-    domain/            预设身份和记录规则
-    infrastructure/    文件、Git、Bambu 与配置适配器
-    ipc/               经过校验的桌面接口
-  preload/             最小权限的 Electron bridge
-  renderer/
-    src/components/    可复用界面组件
-    src/hooks/         界面状态与用例调用
-    src/i18n/          类型化的中英文文案与持久化语言状态
-    src/styles/        设计 token 和响应式布局
-  shared/              主进程与界面共享的契约
-```
+- [用户指南](./docs/USER_GUIDE.md)
+- [产品计划](./PRODUCT_PLAN.md)
+- [技术规格](./TECHNICAL_SPEC.md)
+- [验收清单](./ACCEPTANCE.md)
+- [当前验证状态](./docs/VALIDATION.md)
+- [发布流程](./docs/RELEASING.md)
+- [贡献指南](./CONTRIBUTING.md)
+- [安全策略](./SECURITY.md)
 
-更完整的边界与扩展约束见 [架构说明](docs/ARCHITECTURE.md)。
+## 许可证与商标
 
-### 常见问题
+本仓库以 [GNU Affero General Public License v3.0 only](./LICENSE) 发布。OrcaSlicer 原生集成基于 OrcaSlicer 的 AGPL-3.0 代码与接口，因此整个仓库采用同一许可证，避免把同一产品拆成含混的授权边界。
 
-<details>
-<summary>预设以后必须放在固定位置吗？</summary>
-
-不需要。应用优先自动识别 Bambu Studio 的用户目录；如果目录被移动，只需手动选择一次。
-
-</details>
-
-<details>
-<summary>面板会把自己的修改也显示为“本地修改”吗？</summary>
-
-只要目标预设文件相对预设仓库的 Git `HEAD` 有差异，不论由用户、Bambu Studio 还是其他工具产生，都会显示。软件自身不会改写预设文件。
-
-</details>
-
-<details>
-<summary>为什么 `.info` 变化与参数变化分开显示？</summary>
-
-`.info` 常包含 `setting_id`、同步信息和更新时间。它们可能由 Bambu Studio 自动更新，但不一定改变切片行为，因此面板将其标记为“元数据”。
-
-</details>
-
----
-
-## English
-
-Bambu Preset Dashboard is a local, read-mostly engineering workspace for custom Bambu Studio process, filament, and machine presets.
-
-![Bambu Preset Dashboard English interface](docs/images/dashboard-en.png)
-
-It answers three practical questions in one view:
-
-- Which custom presets exist, and what official presets do they inherit from?
-- Which parameter files differ from the latest local Git record?
-- Does the latest physical print still correspond to the current parameter version?
-
-### Highlights
-
-- Automatic discovery of Bambu Studio user preset folders
-- Process, material, and machine preset inventory
-- Separate Git states for parameter changes and Bambu-only metadata churn
-- Preset identity validation for filenames, internal IDs, and matching `.info` files
-- Append-only print evidence linked to SHA-256 parameter snapshots
-- Single- and multi-material print composition with explicit material roles
-- Persistent Chinese / English interface
-- System light and dark themes
-- Portable Windows x64 build
-
-### Quick start
-
-1. Download the latest portable executable from [Releases](../../releases/latest).
-2. Run it directly; no installer, Node.js, or Python is required.
-3. The app normally discovers `%APPDATA%\BambuStudio\user\*` automatically.
-4. If discovery fails, choose the preset folder once from the lower-left data-source card.
-
-### Safety guarantees
-
-- Preset JSON and `.info` files remain read-only.
-- The app never runs Git staging, commits, pushes, pulls, or resets.
-- No preset data or print evidence is uploaded.
-- The only intentional write is an explicitly saved event appended to `engineering/events.jsonl`.
-
-### Development
-
-```powershell
-pnpm install
-pnpm dev
-pnpm quality
-pnpm package:win
-```
-
-See [Architecture](docs/ARCHITECTURE.md) for implementation boundaries and extension guidance.
-
----
-
-Bambu Studio and Bambu Lab are trademarks of their respective owners. This project is an independent local tool and is not affiliated with or endorsed by Bambu Lab.
+本项目不是 OrcaSlicer、SoftFever 或 Bambu Lab 的官方产品。相关名称和商标属于各自权利人。第三方依赖继续适用其各自许可证；详见 [NOTICE.md](./NOTICE.md)。

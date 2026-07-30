@@ -1,87 +1,59 @@
-import {
-  AlertCircle,
-  Boxes,
-  ChevronRight,
-  FileClock,
-  FlaskConical,
-  FolderOpen,
-  Layers3,
-  Printer,
-  SlidersHorizontal,
-} from 'lucide-react'
+import { Boxes, ChevronRight, FolderOpen, History, SlidersHorizontal } from 'lucide-react'
 
 import type { DashboardSnapshot } from '@shared/contracts'
 
 import { useI18n } from '../i18n/I18nProvider'
 import { compactPath } from '../lib/format'
-import type { ViewFilter } from '../types'
+import type { PrimaryPage } from '../types'
 
 interface SidebarProps {
   readonly snapshot: DashboardSnapshot
-  readonly filter: ViewFilter
-  readonly onFilterChange: (filter: ViewFilter) => void
+  readonly page: PrimaryPage
+  readonly onPageChange: (page: PrimaryPage) => void
   readonly onChooseRoot: () => void
   readonly onOpenRoot: () => void
 }
 
 export function Sidebar({
   snapshot,
-  filter,
-  onFilterChange,
+  page,
+  onPageChange,
   onChooseRoot,
   onOpenRoot,
 }: SidebarProps): React.JSX.Element {
   const { t } = useI18n()
   const items: readonly {
-    id: ViewFilter
+    id: PrimaryPage
     label: string
-    count: number
     icon: typeof Boxes
-    accent?: boolean
   }[] = [
-    { id: 'all', label: t('filter.all'), count: snapshot.stats.total, icon: Boxes },
-    { id: 'process', label: t('sidebar.process'), count: snapshot.stats.process, icon: Layers3 },
     {
-      id: 'filament',
-      label: t('sidebar.filament'),
-      count: snapshot.stats.filament,
-      icon: FlaskConical,
-    },
-    { id: 'machine', label: t('sidebar.machine'), count: snapshot.stats.machine, icon: Printer },
-    {
-      id: 'changed',
-      label: t('filter.changed'),
-      count: snapshot.stats.changed,
-      icon: FileClock,
-      accent: snapshot.stats.changed > 0,
+      id: 'user-presets',
+      label: t('sidebar.userPresets'),
+      icon: Boxes,
     },
     {
-      id: 'attention',
-      label: t('filter.attention'),
-      count: snapshot.stats.needsAttention,
-      icon: AlertCircle,
-      accent: snapshot.stats.needsAttention > 0,
+      id: 'print-history',
+      label: t('sidebar.printHistory'),
+      icon: History,
     },
   ]
 
   return (
     <aside className="sidebar">
-      <nav aria-label={t('sidebar.filters')} className="sidebar-nav">
-        <p className="eyebrow">{t('sidebar.library')}</p>
+      <nav aria-label={t('sidebar.navigation')} className="sidebar-nav">
+        <p className="eyebrow">{t('sidebar.workspace')}</p>
         {items.map((item) => {
           const Icon = item.icon
           return (
             <button
-              className={`nav-item ${filter === item.id ? 'is-active' : ''}`}
+              className={`nav-item ${page === item.id ? 'is-active' : ''}`}
               key={item.id}
-              onClick={() => onFilterChange(item.id)}
+              onClick={() => onPageChange(item.id)}
               type="button"
             >
               <Icon aria-hidden="true" size={17} strokeWidth={1.8} />
               <span>{item.label}</span>
-              <span className={item.accent ? 'nav-count is-accent' : 'nav-count'}>
-                {item.count}
-              </span>
             </button>
           )
         })}
@@ -95,10 +67,10 @@ export function Sidebar({
             <SlidersHorizontal aria-hidden="true" size={16} />
           </span>
           <div>
-            <span className="root-card-title">{t('sidebar.userPresets')}</span>
+            <span className="root-card-title">{t('sidebar.orcaWorkspace')}</span>
             <span className="root-card-status">
               <span className={snapshot.root.path ? 'status-dot is-online' : 'status-dot'} />
-              {snapshot.root.path ? t('sidebar.autoConnected') : t('sidebar.notConnected')}
+              {snapshot.root.path ? t('sidebar.connected') : t('sidebar.notConnected')}
             </span>
           </div>
         </div>

@@ -1,19 +1,19 @@
 {
-  "name": "bambu-preset-dashboard",
-  "version": "0.4.0",
+  "name": "orca-preset-assistant",
+  "version": "0.5.0",
   "private": true,
   "packageManager": "pnpm@11.9.0",
-  "description": "A local engineering dashboard for Bambu Studio presets and print evidence.",
+  "description": "An OrcaSlicer workspace for user presets, controlled Codex changes, and reproducible print history.",
   "main": "out/main/index.js",
   "author": "Bowen",
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "lint": "eslint .",
     "format:check": "prettier --check .",
-    "test": "vitest run",
+    "test": "vitest run --configLoader runner",
     "quality": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test",
     "package:win": "pnpm quality && electron-vite build && electron-builder --win portable"
   },
@@ -41,8 +41,8 @@
     "vitest": "4.1.10"
   },
   "build": {
-    "appId": "com.bowen.bambu-preset-dashboard",
-    "productName": "Bambu Preset Dashboard",
+    "appId": "com.bowen.orca-preset-assistant",
+    "productName": "Orca Preset Assistant",
     "asar": true,
     "directories": {
       "output": "release"
@@ -61,10 +61,10 @@
           ]
         }
       ],
-      "artifactName": "BambuPresetDashboard-${version}-portable.${ext}"
+      "artifactName": "OrcaPresetAssistant-${version}-portable.${ext}"
     },
     "portable": {
-      "artifactName": "BambuPresetDashboard-${version}-portable.${ext}",
+      "artifactName": "OrcaPresetAssistant-${version}-portable.${ext}",
       "requestExecutionLevel": "user"
     }
   }

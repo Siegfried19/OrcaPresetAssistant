@@ -3,8 +3,14 @@ import { dialog, ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from 'el
 import {
   IPC_CHANNELS,
   type AppErrorCode,
+  type ApproveChangeProposalRequest,
+  type CodexPermissionScope,
+  type GuardProposalRollbackRequest,
   type Language,
+  type QueueChangeProposalRequest,
   type RecordPrintRequest,
+  type UpdatePrintHistoryRequest,
+  type UpdateSettingsRequest,
 } from '@shared/contracts'
 
 import type { DashboardService } from '../application/dashboard-service'
@@ -40,19 +46,107 @@ export function registerIpcHandlers(window: BrowserWindow, service: DashboardSer
     assertTrusted(event, window)
     const result = await dialog.showOpenDialog(window, {
       title:
-        language === 'en'
-          ? 'Choose Bambu Studio user preset folder'
-          : '选择 Bambu Studio 用户预设目录',
+        language === 'en' ? 'Choose Orca Preset Assistant workspace' : '选择 Orca 预设助手工作区',
       properties: ['openDirectory'],
     })
     const selectedPath = result.filePaths[0]
     return result.canceled || !selectedPath ? null : service.setRoot(selectedPath)
   })
 
+  ipcMain.handle(IPC_CHANNELS.updateSettings, async (event, request: UpdateSettingsRequest) => {
+    assertTrusted(event, window)
+    return service.updateSettings(request)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.setCodexScope, async (event, scope: CodexPermissionScope) => {
+    assertTrusted(event, window)
+    return service.setCodexScope(scope)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.chooseCodexFileGrant, async (event, language: Language) => {
+    assertTrusted(event, window)
+    const result = await dialog.showOpenDialog(window, {
+      title:
+        language === 'en' ? 'Grant Codex access to one model file' : '授权 Codex 读取一个模型文件',
+      properties: ['openFile'],
+      filters: [{ name: '3D model', extensions: ['stl', '3mf'] }],
+    })
+    const selectedPath = result.filePaths[0]
+    return result.canceled || !selectedPath ? null : service.grantCodexFile(selectedPath)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.revokeCodexFileGrant, async (event, path: string) => {
+    assertTrusted(event, window)
+    return service.revokeCodexFile(path)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.chooseProject3mf, async (event, language: Language) => {
+    assertTrusted(event, window)
+    const result = await dialog.showOpenDialog(window, {
+      title: language === 'en' ? 'Choose the project 3MF to archive' : '选择要归档的项目 3MF',
+      properties: ['openFile'],
+      filters: [{ name: '3MF project', extensions: ['3mf'] }],
+    })
+    const selectedPath = result.filePaths[0]
+    return result.canceled || !selectedPath ? null : service.grantProject3mf(selectedPath)
+  })
+
   ipcMain.handle(IPC_CHANNELS.recordPrint, async (event, request: RecordPrintRequest) => {
     assertTrusted(event, window)
     return service.recordPrint(request)
   })
+
+  ipcMain.handle(
+    IPC_CHANNELS.updatePrintHistory,
+    async (event, request: UpdatePrintHistoryRequest) => {
+      assertTrusted(event, window)
+      return service.updatePrintHistory(request)
+    },
+  )
+
+  ipcMain.handle(IPC_CHANNELS.openPrintHistoryRecord, async (event, id: string) => {
+    assertTrusted(event, window)
+    return service.openPrintHistoryRecord(id)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.deletePrintHistory, async (event, id: string) => {
+    assertTrusted(event, window)
+    return service.deletePrintHistory(id)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.listChangeProposals, async (event) => {
+    assertTrusted(event, window)
+    return service.listChangeProposals()
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.queueChangeProposal,
+    async (event, request: QueueChangeProposalRequest) => {
+      assertTrusted(event, window)
+      return service.queueChangeProposal(request)
+    },
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.approveChangeProposal,
+    async (event, request: ApproveChangeProposalRequest) => {
+      assertTrusted(event, window)
+      return service.approveChangeProposal(request)
+    },
+  )
+
+  ipcMain.handle(IPC_CHANNELS.rejectChangeProposal, async (event, id: string) => {
+    assertTrusted(event, window)
+    return service.rejectChangeProposal(id)
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.guardProposalRollback,
+    async (event, request: GuardProposalRollbackRequest) => {
+      assertTrusted(event, window)
+      return service.guardProposalRollback(request)
+    },
+  )
 
   ipcMain.handle(IPC_CHANNELS.getPresetDiff, async (event, presetId: string) => {
     assertTrusted(event, window)
@@ -67,9 +161,9 @@ export function registerIpcHandlers(window: BrowserWindow, service: DashboardSer
     await service.openRoot()
   })
 
-  ipcMain.handle(IPC_CHANNELS.launchBambu, async (event) => {
+  ipcMain.handle(IPC_CHANNELS.launchOrca, async (event) => {
     assertTrusted(event, window)
-    await service.launchBambu()
+    await service.launchOrca()
   })
 
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))

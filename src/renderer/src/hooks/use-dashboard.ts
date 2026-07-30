@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
 
-import type { DashboardSnapshot, PresetDiff, RecordPrintRequest } from '@shared/contracts'
+import type {
+  ApproveChangeProposalRequest,
+  ChangeProposalView,
+  CodexPermissionScope,
+  DashboardSnapshot,
+  RecordPrintRequest,
+  UpdatePrintHistoryRequest,
+  UpdateSettingsRequest,
+} from '@shared/contracts'
 
+import { getDashboardApi } from '../host/dashboard-host'
 import { useI18n } from '../i18n/I18nProvider'
 import { errorMessage } from '../lib/format'
 
@@ -13,13 +22,23 @@ interface DashboardController {
   refresh(): Promise<void>
   chooseRoot(): Promise<void>
   openRoot(): Promise<void>
-  launchBambu(): Promise<void>
+  updateSettings(request: UpdateSettingsRequest): Promise<void>
+  setCodexScope(scope: CodexPermissionScope): Promise<void>
+  chooseCodexFileGrant(): Promise<void>
+  revokeCodexFileGrant(path: string): Promise<void>
+  chooseProject3mf(): Promise<string | null>
   recordPrint(request: RecordPrintRequest): Promise<void>
-  getPresetDiff(presetId: string): Promise<PresetDiff>
+  updatePrintHistory(request: UpdatePrintHistoryRequest): Promise<void>
+  openPrintHistoryRecord(id: string): Promise<void>
+  deletePrintHistory(id: string): Promise<void>
+  approveChangeProposal(request: ApproveChangeProposalRequest): Promise<ChangeProposalView>
+  rejectChangeProposal(id: string): Promise<ChangeProposalView>
+  rollbackChangeProposal(id: string): Promise<ChangeProposalView>
 }
 
 export function useDashboard(): DashboardController {
   const { language, t } = useI18n()
+  const api = getDashboardApi()
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
   const [errorSource, setErrorSource] = useState<unknown>(null)
@@ -35,39 +54,117 @@ export function useDashboard(): DashboardController {
   }, [])
 
   const refresh = useCallback(async () => {
-    const next = await perform(() => window.dashboard.refresh())
+    const next = await perform(() => api.refresh())
     setSnapshot(next)
-  }, [perform])
+  }, [api, perform])
 
   const chooseRoot = useCallback(async () => {
-    const next = await perform(() => window.dashboard.chooseRoot(language))
+    const next = await perform(() => api.chooseRoot(language))
     if (next) setSnapshot(next)
-  }, [language, perform])
+  }, [api, language, perform])
 
   const openRoot = useCallback(async () => {
-    await perform(() => window.dashboard.openRoot())
-  }, [perform])
+    await perform(() => api.openRoot())
+  }, [api, perform])
 
-  const launchBambu = useCallback(async () => {
-    await perform(() => window.dashboard.launchBambu())
-  }, [perform])
+  const updateSettings = useCallback(
+    async (request: UpdateSettingsRequest) => {
+      const next = await perform(() => api.updateSettings(request))
+      setSnapshot(next)
+    },
+    [api, perform],
+  )
+
+  const setCodexScope = useCallback(
+    async (scope: CodexPermissionScope) => {
+      const next = await perform(() => api.setCodexScope(scope))
+      setSnapshot(next)
+    },
+    [api, perform],
+  )
+
+  const chooseCodexFileGrant = useCallback(async () => {
+    const next = await perform(() => api.chooseCodexFileGrant(language))
+    if (next) setSnapshot(next)
+  }, [api, language, perform])
+
+  const revokeCodexFileGrant = useCallback(
+    async (path: string) => {
+      const next = await perform(() => api.revokeCodexFileGrant(path))
+      setSnapshot(next)
+    },
+    [api, perform],
+  )
+
+  const chooseProject3mf = useCallback(
+    () => perform(() => api.chooseProject3mf(language)),
+    [api, language, perform],
+  )
 
   const recordPrint = useCallback(
     async (request: RecordPrintRequest) => {
-      const next = await perform(() => window.dashboard.recordPrint(request))
+      const next = await perform(() => api.recordPrint(request))
       setSnapshot(next)
     },
-    [perform],
+    [api, perform],
   )
 
-  const getPresetDiff = useCallback(
-    (presetId: string) => perform(() => window.dashboard.getPresetDiff(presetId)),
-    [perform],
+  const updatePrintHistory = useCallback(
+    async (request: UpdatePrintHistoryRequest) => {
+      const next = await perform(() => api.updatePrintHistory(request))
+      setSnapshot(next)
+    },
+    [api, perform],
+  )
+
+  const openPrintHistoryRecord = useCallback(
+    async (id: string) => {
+      await perform(() => api.openPrintHistoryRecord(id))
+    },
+    [api, perform],
+  )
+
+  const deletePrintHistory = useCallback(
+    async (id: string) => {
+      const next = await perform(() => api.deletePrintHistory(id))
+      setSnapshot(next)
+    },
+    [api, perform],
+  )
+
+  const approveChangeProposal = useCallback(
+    async (request: ApproveChangeProposalRequest) => {
+      const proposal = await perform(() => api.approveChangeProposal(request))
+      const next = await perform(() => api.refresh())
+      setSnapshot(next)
+      return proposal
+    },
+    [api, perform],
+  )
+
+  const rejectChangeProposal = useCallback(
+    async (id: string) => {
+      const proposal = await perform(() => api.rejectChangeProposal(id))
+      const next = await perform(() => api.refresh())
+      setSnapshot(next)
+      return proposal
+    },
+    [api, perform],
+  )
+
+  const rollbackChangeProposal = useCallback(
+    async (id: string) => {
+      const proposal = await perform(() => api.rollbackChangeProposal(id))
+      const next = await perform(() => api.refresh())
+      setSnapshot(next)
+      return proposal
+    },
+    [api, perform],
   )
 
   useEffect(() => {
     let active = true
-    void window.dashboard
+    void api
       .getSnapshot()
       .then((next) => {
         if (active) setSnapshot(next)
@@ -79,7 +176,7 @@ export function useDashboard(): DashboardController {
         if (active) setLoading(false)
       })
 
-    const unsubscribe = window.dashboard.onSnapshotChanged((next) => {
+    const unsubscribe = api.onSnapshotChanged((next) => {
       if (active) setSnapshot(next)
     })
 
@@ -87,7 +184,7 @@ export function useDashboard(): DashboardController {
       active = false
       unsubscribe()
     }
-  }, [])
+  }, [api])
 
   return {
     snapshot,
@@ -97,8 +194,17 @@ export function useDashboard(): DashboardController {
     refresh,
     chooseRoot,
     openRoot,
-    launchBambu,
+    updateSettings,
+    setCodexScope,
+    chooseCodexFileGrant,
+    revokeCodexFileGrant,
+    chooseProject3mf,
     recordPrint,
-    getPresetDiff,
+    updatePrintHistory,
+    openPrintHistoryRecord,
+    deletePrintHistory,
+    approveChangeProposal,
+    rejectChangeProposal,
+    rollbackChangeProposal,
   }
 }

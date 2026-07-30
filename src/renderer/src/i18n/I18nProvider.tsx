@@ -2,11 +2,13 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 
 import type { Language } from '@shared/contracts'
 
+import { resolveHostLanguage, resolveInitialPanelLanguage } from './language'
 import { createTranslator, type Translator } from './messages'
 
-const STORAGE_KEY = 'bambu-preset-dashboard.language'
+const STORAGE_KEY = 'orca-preset-assistant.language'
 
 interface I18nContextValue {
+  readonly hostLanguage: Language
   readonly language: Language
   readonly setLanguage: (language: Language) => void
   readonly t: Translator
@@ -14,18 +16,12 @@ interface I18nContextValue {
 
 const I18nContext = createContext<I18nContextValue | null>(null)
 
-function isLanguage(value: string | null): value is Language {
-  return value === 'zh-CN' || value === 'en'
-}
-
 function initialLanguage(): Language {
-  const queryLanguage = new URLSearchParams(window.location.search).get('language')
-  if (isLanguage(queryLanguage)) return queryLanguage
-
-  const savedLanguage = window.localStorage.getItem(STORAGE_KEY)
-  if (isLanguage(savedLanguage)) return savedLanguage
-
-  return window.navigator.language.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en'
+  return resolveInitialPanelLanguage(
+    window.location.search,
+    window.localStorage.getItem(STORAGE_KEY),
+    window.navigator.language,
+  )
 }
 
 export function I18nProvider({
@@ -33,14 +29,16 @@ export function I18nProvider({
 }: {
   readonly children: React.ReactNode
 }): React.JSX.Element {
+  const [hostLanguage] = useState<Language>(() =>
+    resolveHostLanguage(window.location.search, window.navigator.language),
+  )
   const [language, setLanguageState] = useState<Language>(initialLanguage)
 
   useEffect(() => {
     document.documentElement.lang = language
-    document.title =
-      language === 'zh-CN' ? 'Bambu 预设工程面板' : 'Bambu Preset Engineering Dashboard'
+    document.title = hostLanguage === 'zh-CN' ? 'Orca 预设助手' : 'Orca Preset Assistant'
     window.localStorage.setItem(STORAGE_KEY, language)
-  }, [language])
+  }, [hostLanguage, language])
 
   const setLanguage = useCallback((next: Language) => {
     setLanguageState(next)
@@ -48,7 +46,9 @@ export function I18nProvider({
   const t = useMemo(() => createTranslator(language), [language])
 
   return (
-    <I18nContext.Provider value={{ language, setLanguage, t }}>{children}</I18nContext.Provider>
+    <I18nContext.Provider value={{ hostLanguage, language, setLanguage, t }}>
+      {children}
+    </I18nContext.Provider>
   )
 }
 

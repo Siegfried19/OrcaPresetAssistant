@@ -1,0 +1,12 @@
+diff --git a/src/slic3r/GUI/MainFrame.cpp b/src/slic3r/GUI/MainFrame.cpp
+--- a/src/slic3r/GUI/MainFrame.cpp
++++ b/src/slic3r/GUI/MainFrame.cpp
+@@ -1275,7 +1275,7 @@ void MainFrame::init_tabpanel()
+         else if (panel == m_monitor) {
+             //monitor
+         }
+-        else if (panel == m_preset_assistant)
++        else if (m_preset_assistant && panel == m_preset_assistant)
+             m_preset_assistant->activate();
+ #ifndef __APPLE__
+         if (sel == tp3DEditor) {

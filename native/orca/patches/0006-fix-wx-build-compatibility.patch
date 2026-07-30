@@ -1,0 +1,38 @@
+diff --git a/src/slic3r/GUI/PresetAssistantPanel.cpp b/src/slic3r/GUI/PresetAssistantPanel.cpp
+--- a/src/slic3r/GUI/PresetAssistantPanel.cpp
++++ b/src/slic3r/GUI/PresetAssistantPanel.cpp
+@@ -112,8 +112,8 @@ wxString trusted_bridge_script(
+         return bootstrap;
+     }
+-    const std::string adapter(
++    const std::string adapter{
+         std::istreambuf_iterator<char>(stream),
+-        std::istreambuf_iterator<char>());
++        std::istreambuf_iterator<char>()};
+     return bootstrap + "\n" + adapter;
+ }
+ 
+@@ -332,10 +332,8 @@ void PresetAssistantPanel::stop_helper()
+ #ifdef _WIN32
+     if (m_helper_pid > 0 && wxProcess::Exists(m_helper_pid)) {
+-        wxKillError kill_error = wxKILL_OK;
+-        wxProcess::Kill(
++        const wxKillError kill_error = wxProcess::Kill(
+             m_helper_pid,
+             wxSIGTERM,
+-            &kill_error,
+             wxKILL_CHILDREN);
+         if (kill_error != wxKILL_OK)
+             BOOST_LOG_TRIVIAL(warning)
+diff --git a/src/slic3r/GUI/PresetAssistantBridge.cpp b/src/slic3r/GUI/PresetAssistantBridge.cpp
+--- a/src/slic3r/GUI/PresetAssistantBridge.cpp
++++ b/src/slic3r/GUI/PresetAssistantBridge.cpp
+@@ -1187,7 +1187,7 @@ json PresetAssistantBridge::workspace_choose(const json& params)
+     const wxString initial = from_u8(
+         app_config.get(CONFIG_SECTION, CONFIG_WORKSPACE_KEY));
+     wxDirDialog dialog(
+-        app.mainframe,
++        app.GetTopWindow(),
+         _L("Choose Orca Preset Assistant workspace"),
+         initial,
+         wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST);

@@ -1,81 +1,127 @@
 # Architecture
 
-## 设计目标
+## 产品边界
 
-1. 用户双击一个便携 EXE 即可使用。
-2. 预设读取、Git 差异、打印证据和界面彼此解耦。
-3. 默认只读，任何写入都必须来自明确的用户动作。
-4. 后续功能以新增用例或适配器扩展，不让 React 组件直接访问磁盘。
-5. Git 中的数据保持透明、可审计、可被其他工具读取。
+Orca Preset Assistant 是 OrcaSlicer 主窗口中的用户预设与打印历史页面。日常只显示 Orca
+和 Codex 两个窗口；面板不接管模型编辑、切片、设备、打印账号或云服务。
 
-## 运行时边界
+用户只选择一个工作区：
 
 ```text
-React renderer
-    │ typed, narrow IPC contract
-Electron preload
-    │ validated commands
-Application service
-    ├── preset repository (read-only)
-    ├── Git service (read-only)
-    ├── event store (append-only)
-    ├── local configuration
-    └── Bambu launcher
+<Workspace>\
+├─ UserPresets\
+│  ├─ machine\
+│  ├─ process\
+│  └─ filament\
+└─ PrintHistory\
 ```
 
-Renderer 启用了 sandbox、context isolation，并关闭 Node integration。界面不能提交任意文件路径或任意 IPC channel；主进程只接受预设 ID 和有限枚举值，再对当前扫描结果做二次校验。
+官方预设仍由 Orca 管理。工作区只保存用户自定义预设和打印档案。
 
-## 分层规则
+## 运行组件
 
-- `shared/` 只放可序列化的契约，不依赖 Electron、Node 或 React。
-- `domain/` 只表达工程规则，不调用文件系统或 UI。
-- `application/` 编排用例，维护当前预设根目录和快照。
-- `infrastructure/` 隔离外部状态：JSON、`.info`、Git、进程与用户配置。
-- `renderer/` 只消费 `DashboardApi`，不假设预设位于固定目录。
-- 组件使用设计 token，不在 JSX 中散落颜色、阴影和尺寸常量。
+```text
+┌────────────────────────── Orca 主进程 ──────────────────────────┐
+│  定制原生控制器                                                │
+│  - 当前预设 / 有效参数 / 项目摆放                              │
+│  - 三种写入 / 原生保存 / 回滚 / 3MF 导出                       │
+│  - 打印成功事件                                                │
+│              ↕ 带会话 token 的 wxWebView 原生桥               │
+│  React 面板（User Presets / Print History）                    │
+└───────────────────────┬─────────────────────────────────────────┘
+                        ↕ 仅本机、固定路由 HTTP
+              隐藏 Electron helper（无窗口）
+                        ↕
+          工作区 / 提案记录 / 权限状态 / 打印历史包
 
-## 写入策略
+Codex 插件 MCP
+  ↕ 受限 native-state + 提案 inbox
+隐藏 helper
+```
 
-当前唯一的业务写入是 `engineering/events.jsonl`：
+正式运行不依赖 Orca Python 插件。独立 Electron 窗口只用于开发和测试。
 
-- 只追加，不原地修改历史；
-- 一次写入一个完整 JSON 对象；
-- 路径使用预设仓库内的相对路径；
-- 同时存 SHA-256 与自定义 JSON 快照；
-- schema v2 为每个材料快照记录模型、支撑主体、支撑界面或其他用途；
-- 读取层继续兼容未记录材料用途的 schema v1 事件；
-- 展示时重新计算 SHA-256，区分“当前版本证据”和“旧参数版本证据”。
+## 权威规则
 
-应用自己的根目录配置写入 Electron `userData/config.json`，不污染 Bambu 目录。
+- Orca 是当前项目、实际有效设置和永久预设写入的唯一权威来源。
+- helper 负责持久化业务记录，但不能自行宣布 Orca 写入成功。
+- 面板只能在收到 Orca 原生回执后将提案标为 applied 或 rolled-back。
+- Codex 只能排队提案，不能直接调用永久写入。
 
-## 推荐扩展顺序
+## 三种写入
 
-### 参数对比
+1. `current-project`：只修改当前项目，不保存永久预设。
+2. `update-current-preset`：由 Orca 更新当前可写用户预设。
+3. `save-as-new-preset`：由 Orca 创建新用户预设，并由 Orca 自行管理可选的同步身份文件。
 
-新增 `ComparePresetUseCase` 和只读的官方继承解析适配器。界面只接收归一化后的参数差异，不自行解析 Bambu JSON。
+每次写入都验证：
 
-### 图片与缺陷标注
+- 用户已审批且目标明确；
+- revision 与提案生成时一致；
+- 当前选择仍是预期预设；
+- 官方预设不会被覆盖；
+- 参数在类型安全白名单中；
+- 写入后的值和文件身份可验证。
 
-新增 `AttachmentStore`，事件中保存内容哈希和相对引用。避免在 JSONL 中嵌入二进制内容。
+Orca 返回一次性回滚 guard。任何后续 revision 或值冲突都会使回滚失效。另存新预设的回滚
+只恢复原选择，不自动删除用户刚创建的预设。
 
-### 第三方教程与本地知识
+## 打印历史
 
-新增独立 `KnowledgeRepository`，将来源、抓取时间、摘要、适用材料/设备和证据等级建模。不要把知识条目混进预设 JSON。
+```text
+PrintHistory\<run-id>\
+├─ record.json
+├─ settings.json
+└─ project.3mf       # 可选
+```
 
-### 参数编辑
+- `record.json` 可补写结果与备注。
+- `settings.json` 保存提交打印时 Orca 的完整有效设置，创建后不可改写。
+- `project.3mf` 由 Orca 导出到 helper 预先准备且校验过的历史目录。
+- `archiveId` 用于幂等，避免事件和轮询同时触发时重复建档。
 
-只有在实现继承链解析、完整校验、备份和用户确认后再开放。编辑必须是单独命令，不能复用打印记录接口，也不能由 renderer 直接提交任意 JSON。
+## 数据权限
 
-## 代码质量门槛
+| 范围               | Codex 可读取                        | 明确不包含                 |
+| ------------------ | ----------------------------------- | -------------------------- |
+| `general`          | 无 Orca 数据                        | 设置、项目、路径、模型     |
+| `current-settings` | 当前预设身份与有效参数              | 对象、摆放、文件路径、网格 |
+| `current-project`  | 上述内容、对象/摆放及项目内模型几何 | 与当前项目无关的文件       |
+| 单文件授权         | 指定的项目外 STL/3MF                | 其他模型文件               |
 
-合并前必须通过：
+`current-project` 是会话权限，并自动覆盖当前打开项目中的模型；单文件授权只用于项目外文件。刷新不改变权限。
+
+## 安全通道
+
+- helper 只监听随机 `127.0.0.1` 端口；
+- 请求必须通过精确 Origin 和 Bearer 会话令牌；
+- 原生专用路由还要求内部桥接标记；
+- native state 有 10 秒新鲜度限制；
+- token 不写入 ready state；
+- helper 路径是 Orca resources 下的固定打包位置，配置不能指定任意可执行文件；
+- 父 Orca 退出时 helper 一并退出并清理 ready state。
+
+## 源码分层
+
+- `src/shared/`：前后端协议和可序列化数据契约；
+- `src/main/domain/`：产品规则和数据结构；
+- `src/main/application/`：用例编排；
+- `src/main/infrastructure/`：工作区、历史、提案、配置和权限状态；
+- `src/renderer/`：两页式面板及双宿主适配；
+- `native/orca/`：可审查、可回退的 Orca 原生补丁；
+- `plugins/orca-preset-assistant/`：独立 Codex 插件源码。
+
+## 交付门槛
 
 ```text
 TypeScript strict typecheck
 ESLint
-Prettier check
+Prettier
 Vitest
-electron-vite production build
-真实预设只读扫描
-便携 EXE 启动与界面截图
+Electron production build
+helper HTTP / headless smoke test
+Orca patches sequential apply check
+Orca Release build and native tests
+real Orca panel smoke test
+Windows package and current screenshots
 ```

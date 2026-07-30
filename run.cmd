@@ -2,12 +2,18 @@
 setlocal
 cd /d "%~dp0"
 
-if exist "BambuPresetDashboard.exe" (
-  start "" "BambuPresetDashboard.exe"
+set "PACKAGED_ORCA=%~dp0FullVersion\OrcaSlicer\orca-slicer.exe"
+if exist "%PACKAGED_ORCA%" (
+  start "" "%PACKAGED_ORCA%"
   exit /b 0
 )
 
-for %%F in ("release\BambuPresetDashboard-*-portable.exe") do (
+if exist "OrcaPresetAssistant.exe" (
+  start "" "OrcaPresetAssistant.exe"
+  exit /b 0
+)
+
+for %%F in ("release\OrcaPresetAssistant-*-portable.exe") do (
   start "" "%%~fF"
   exit /b 0
 )

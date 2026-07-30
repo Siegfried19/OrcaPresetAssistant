@@ -1,27 +1,47 @@
 import {
   AlertTriangle,
+  BadgeInfo,
   CheckCircle2,
   FileJson2,
-  GitCompareArrows,
   History,
   Link2,
   MousePointer2,
+  X,
 } from 'lucide-react'
 
-import type { PresetView } from '@shared/contracts'
+import type {
+  ApproveChangeProposalRequest,
+  ChangeProposalView,
+  PresetView,
+} from '@shared/contracts'
 
 import { useI18n } from '../i18n/I18nProvider'
 import { materialRoleTranslationKey, validationTranslationKey } from '../i18n/messages'
 import { formatDate } from '../lib/format'
-import { GitBadge, KindBadge, ResultBadge } from './Badges'
+import { KindBadge, OriginBadge, ResultBadge } from './Badges'
+import { ChangeProposalCard } from './ChangeProposalCard'
 
 interface InspectorProps {
   readonly preset: PresetView | null
-  readonly onShowDiff: (presetId: string) => void
+  readonly proposal: ChangeProposalView | null
+  readonly proposalTargetName: string | null
+  readonly onClose: () => void
   readonly onRecord: () => void
+  readonly onApproveProposal: (request: ApproveChangeProposalRequest) => Promise<void>
+  readonly onRejectProposal: (id: string) => Promise<void>
+  readonly onRollbackProposal: (id: string) => Promise<void>
 }
 
-export function Inspector({ preset, onShowDiff, onRecord }: InspectorProps): React.JSX.Element {
+export function Inspector({
+  preset,
+  proposal,
+  proposalTargetName,
+  onClose,
+  onRecord,
+  onApproveProposal,
+  onRejectProposal,
+  onRollbackProposal,
+}: InspectorProps): React.JSX.Element {
   const { language, t } = useI18n()
   if (!preset) {
     return (
@@ -38,18 +58,39 @@ export function Inspector({ preset, onShowDiff, onRecord }: InspectorProps): Rea
   return (
     <aside className="inspector">
       <div className="inspector-header">
+        <button
+          aria-label={t('action.close')}
+          className="inspector-close"
+          onClick={onClose}
+          type="button"
+        >
+          <X aria-hidden="true" size={17} />
+        </button>
         <div className="inspector-badges">
           <KindBadge kind={preset.kind} />
-          <GitBadge state={preset.gitState} />
+          <OriginBadge origin={preset.origin} />
         </div>
         <h2>{preset.name}</h2>
         <p>{preset.relativePath}</p>
       </div>
 
       <div className="inspector-scroll">
+        {preset.kind === 'machine' && (
+          <div className="warning-banner machine-read-only">
+            <AlertTriangle aria-hidden="true" size={15} />
+            <span>{t('inspector.machineReadOnly')}</span>
+          </div>
+        )}
         <section className="detail-section">
           <h3>{t('inspector.identity')}</h3>
           <dl className="detail-list">
+            <div>
+              <dt>
+                <BadgeInfo aria-hidden="true" size={15} />
+                {t('inspector.origin')}
+              </dt>
+              <dd title={t(`origin.${preset.origin}.detail`)}>{t(`origin.${preset.origin}`)}</dd>
+            </div>
             <div>
               <dt>
                 <Link2 aria-hidden="true" size={15} />
@@ -73,6 +114,15 @@ export function Inspector({ preset, onShowDiff, onRecord }: InspectorProps): Rea
             </div>
           </dl>
         </section>
+
+        <ChangeProposalCard
+          key={proposal?.id ?? 'empty-proposal'}
+          onApprove={onApproveProposal}
+          onReject={onRejectProposal}
+          onRollback={onRollbackProposal}
+          proposal={proposal}
+          targetName={proposalTargetName}
+        />
 
         <section className="detail-section">
           <div className="section-heading">
@@ -143,15 +193,6 @@ export function Inspector({ preset, onShowDiff, onRecord }: InspectorProps): Rea
       </div>
 
       <div className="inspector-actions">
-        <button
-          className="secondary-button"
-          disabled={preset.gitState === 'clean' || preset.gitState === 'unknown'}
-          onClick={() => onShowDiff(preset.id)}
-          type="button"
-        >
-          <GitCompareArrows aria-hidden="true" size={16} />
-          {t('action.viewChanges')}
-        </button>
         <button className="primary-button" onClick={onRecord} type="button">
           {t('action.recordPrint')}
         </button>

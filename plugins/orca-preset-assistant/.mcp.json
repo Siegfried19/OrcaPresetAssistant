@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "orca-preset-assistant": {
+      "command": "node",
+      "args": ["server/server.mjs"],
+      "cwd": "."
+    }
+  }
+}

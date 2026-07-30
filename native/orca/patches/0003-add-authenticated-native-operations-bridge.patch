@@ -1,0 +1,2083 @@
+diff --git a/src/slic3r/CMakeLists.txt b/src/slic3r/CMakeLists.txt
+--- a/src/slic3r/CMakeLists.txt
++++ b/src/slic3r/CMakeLists.txt
+@@ -405,6 +405,8 @@ set(SLIC3R_GUI_SOURCES
+     GUI/PlateSettingsDialog.hpp
+     GUI/Preferences.cpp
+     GUI/Preferences.hpp
++    GUI/PresetAssistantBridge.cpp
++    GUI/PresetAssistantBridge.hpp
+     GUI/PresetAssistantPanel.cpp
+     GUI/PresetAssistantPanel.hpp
+     GUI/PresetBundleDialog.cpp
+diff --git a/src/slic3r/GUI/PresetAssistantBridge.hpp b/src/slic3r/GUI/PresetAssistantBridge.hpp
+new file mode 100644
+--- /dev/null
++++ b/src/slic3r/GUI/PresetAssistantBridge.hpp
+@@ -0,0 +1,75 @@
++#ifndef slic3r_GUI_PresetAssistantBridge_hpp_
++#define slic3r_GUI_PresetAssistantBridge_hpp_
++
++#include <cstdint>
++#include <memory>
++#include <string>
++
++#include <nlohmann/json.hpp>
++
++namespace Slic3r { namespace GUI {
++
++// Narrow native operations surface for the product-owned Preset Assistant page.
++// It is intentionally independent from Electron preload and PluginHost.
++class PresetAssistantBridge final
++{
++public:
++    explicit PresetAssistantBridge(std::string token);
++    ~PresetAssistantBridge();
++
++    nlohmann::json handle_message(const std::string& raw_message,
++                                  const std::string& source_url,
++                                  const std::string& trusted_page_url);
++
++    // Called on the wx UI thread after PrintJob has received an authoritative
++    // success result. The returned payload is emitted to the page and retained
++    // until the workspace helper acknowledges/persists it.
++    nlohmann::json notify_print_submitted(const std::string& project_name);
++
++    uint64_t revision() const { return m_revision; }
++
++    static bool is_trusted_source(const std::string& candidate_url,
++                                  const std::string& trusted_page_url);
++    static bool has_explicit_panel_approval(const nlohmann::json& params);
++    static bool preserves_created_preset_on_rollback(
++        const std::string& destination);
++
++private:
++    struct RollbackRecord;
++
++    nlohmann::json dispatch(const std::string& method, const nlohmann::json& params);
++    nlohmann::json state_get(const nlohmann::json& params);
++    nlohmann::json settings_get(const nlohmann::json& params);
++    nlohmann::json project_get(const nlohmann::json& params);
++    nlohmann::json project_export_copy(const nlohmann::json& params);
++    nlohmann::json workspace_get(const nlohmann::json& params);
++    nlohmann::json workspace_set(const nlohmann::json& params);
++    nlohmann::json workspace_choose(const nlohmann::json& params);
++    nlohmann::json presets_refresh(const nlohmann::json& params);
++    nlohmann::json proposal_apply(const nlohmann::json& params);
++    nlohmann::json proposal_rollback(const nlohmann::json& params);
++    nlohmann::json pending_print_get(const nlohmann::json& params);
++
++    nlohmann::json success_response(const std::string& request_id,
++                                    nlohmann::json data) const;
++    nlohmann::json error_response(const std::string& request_id,
++                                  const std::string& code,
++                                  const std::string& message) const;
++
++    void sync_revision();
++    void advance_revision();
++    std::string compute_state_fingerprint() const;
++    void clear_rollback();
++
++    std::string m_token;
++    uint64_t    m_revision{1};
++    std::string m_last_fingerprint;
++    bool        m_pending_restart{false};
++
++    std::unique_ptr<RollbackRecord> m_rollback;
++    nlohmann::json                  m_pending_print_archive;
++};
++
++}} // namespace Slic3r::GUI
++
++#endif // slic3r_GUI_PresetAssistantBridge_hpp_
+diff --git a/src/slic3r/GUI/PresetAssistantBridge.cpp b/src/slic3r/GUI/PresetAssistantBridge.cpp
+new file mode 100644
+--- /dev/null
++++ b/src/slic3r/GUI/PresetAssistantBridge.cpp
+@@ -0,0 +1,1293 @@
++#include "PresetAssistantBridge.hpp"
++
++#include "GUI_App.hpp"
++#include "GUI_Utils.hpp"
++#include "PartPlate.hpp"
++#include "Plater.hpp"
++#include "Tab.hpp"
++
++#include <libslic3r/AppConfig.hpp>
++#include <libslic3r/PresetBundle.hpp>
++#include <libslic3r/PrintConfig.hpp>
++
++#include <algorithm>
++#include <array>
++#include <chrono>
++#include <cmath>
++#include <iomanip>
++#include <memory>
++#include <set>
++#include <sstream>
++#include <stdexcept>
++#include <unordered_set>
++
++#include <boost/algorithm/string/case_conv.hpp>
++#include <boost/algorithm/string/predicate.hpp>
++#include <boost/algorithm/string/trim.hpp>
++#include <boost/filesystem.hpp>
++#include <boost/log/trivial.hpp>
++#include <boost/uuid/uuid_generators.hpp>
++#include <boost/uuid/uuid_io.hpp>
++
++#include <wx/app.h>
++#include <wx/dirdlg.h>
++
++namespace Slic3r { namespace GUI {
++
++namespace {
++
++using json = nlohmann::json;
++namespace fs = boost::filesystem;
++
++constexpr const char* CONFIG_SECTION       = "orca_preset_assistant";
++constexpr const char* CONFIG_WORKSPACE_KEY = "workspace";
++constexpr uint64_t    PROTOCOL_VERSION     = 1;
++constexpr size_t      MAX_MESSAGE_BYTES    = 256 * 1024;
++
++class BridgeError final : public std::runtime_error
++{
++public:
++    BridgeError(std::string code, std::string message)
++        : std::runtime_error(std::move(message)), code(std::move(code))
++    {}
++
++    std::string code;
++};
++
++std::string new_id()
++{
++    return boost::uuids::to_string(boost::uuids::random_generator()());
++}
++
++void reject_unknown_keys(const json& object,
++                         std::initializer_list<const char*> allowed,
++                         const char* context)
++{
++    if (!object.is_object())
++        throw BridgeError("INVALID_REQUEST", std::string(context) + " must be an object");
++
++    std::set<std::string> accepted;
++    for (const char* key : allowed)
++        accepted.emplace(key);
++    for (auto it = object.begin(); it != object.end(); ++it)
++        if (accepted.find(it.key()) == accepted.end())
++            throw BridgeError("INVALID_REQUEST",
++                              std::string("Unsupported ") + context + " field: " + it.key());
++}
++
++std::string require_string(const json& object, const char* key)
++{
++    auto it = object.find(key);
++    if (it == object.end() || !it->is_string())
++        throw BridgeError("INVALID_REQUEST", std::string("Missing string field: ") + key);
++    const std::string value = it->get<std::string>();
++    if (value.empty())
++        throw BridgeError("INVALID_REQUEST", std::string("Empty string field: ") + key);
++    return value;
++}
++
++bool is_mutation_method(const std::string& method)
++{
++    return method == "workspace.set" ||
++           method == "workspace.choose" ||
++           method == "project.export-copy" ||
++           method == "proposal.apply" ||
++           method == "proposal.rollback";
++}
++
++bool is_supported_method(const std::string& method)
++{
++    static const std::unordered_set<std::string> methods{
++        "state.get",
++        "settings.get",
++        "project.get",
++        "project.export-copy",
++        "workspace.get",
++        "workspace.set",
++        "workspace.choose",
++        "presets.refresh",
++        "proposal.apply",
++        "proposal.rollback",
++        "print.pending.get",
++    };
++    return methods.find(method) != methods.end();
++}
++
++std::string strip_query_and_fragment(std::string value)
++{
++    const size_t pos = value.find_first_of("?#");
++    if (pos != std::string::npos)
++        value.erase(pos);
++    return value;
++}
++
++int hex_value(char c)
++{
++    if (c >= '0' && c <= '9') return c - '0';
++    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
++    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
++    return -1;
++}
++
++std::string percent_decode(const std::string& value)
++{
++    std::string out;
++    out.reserve(value.size());
++    for (size_t i = 0; i < value.size(); ++i) {
++        if (value[i] == '%' && i + 2 < value.size()) {
++            const int high = hex_value(value[i + 1]);
++            const int low  = hex_value(value[i + 2]);
++            if (high >= 0 && low >= 0) {
++                out.push_back(static_cast<char>((high << 4) | low));
++                i += 2;
++                continue;
++            }
++        }
++        out.push_back(value[i]);
++    }
++    return out;
++}
++
++std::string normalized_file_url(std::string value)
++{
++    value = strip_query_and_fragment(percent_decode(value));
++    if (!boost::algorithm::istarts_with(value, "file:"))
++        return {};
++    value.erase(0, 5);
++    std::replace(value.begin(), value.end(), '\\', '/');
++    while (!value.empty() && value.front() == '/')
++        value.erase(value.begin());
++#ifdef _WIN32
++    value = boost::algorithm::to_lower_copy(value);
++#endif
++    return value;
++}
++
++std::string http_origin(const std::string& value)
++{
++    const std::string lower = boost::algorithm::to_lower_copy(value);
++    size_t scheme_end = lower.find("://");
++    if (scheme_end == std::string::npos)
++        return {};
++    const std::string scheme = lower.substr(0, scheme_end);
++    if (scheme != "http" && scheme != "https")
++        return {};
++    const size_t authority_start = scheme_end + 3;
++    const size_t authority_end = lower.find_first_of("/?#", authority_start);
++    const std::string authority = lower.substr(
++        authority_start,
++        authority_end == std::string::npos ? std::string::npos : authority_end - authority_start);
++    if (authority.empty())
++        return {};
++
++    const bool loopback =
++        authority == "localhost" ||
++        boost::algorithm::starts_with(authority, "localhost:") ||
++        authority == "127.0.0.1" ||
++        boost::algorithm::starts_with(authority, "127.0.0.1:") ||
++        authority == "[::1]" ||
++        boost::algorithm::starts_with(authority, "[::1]:");
++    if (!loopback)
++        return {};
++    return scheme + "://" + authority;
++}
++
++GUI_App& require_app()
++{
++    if (wxTheApp == nullptr)
++        throw BridgeError("ORCA_NOT_READY", "Orca application is not initialized");
++    return wxGetApp();
++}
++
++AppConfig& require_app_config()
++{
++    GUI_App& app = require_app();
++    if (app.app_config == nullptr)
++        throw BridgeError("ORCA_NOT_READY", "Orca application settings are not initialized");
++    return *app.app_config;
++}
++
++PresetBundle& require_bundle()
++{
++    GUI_App& app = require_app();
++    if (app.preset_bundle == nullptr)
++        throw BridgeError("ORCA_NOT_READY", "Preset bundle is not initialized");
++    return *app.preset_bundle;
++}
++
++Plater& require_plater()
++{
++    GUI_App& app = require_app();
++    Plater* plater = app.plater();
++    if (plater == nullptr)
++        throw BridgeError("PROJECT_NOT_READY", "No active Orca project");
++    return *plater;
++}
++
++Tab& require_process_tab()
++{
++    GUI_App& app = require_app();
++    Tab* tab = app.get_tab(Preset::TYPE_PRINT);
++    if (tab == nullptr || tab->get_config() == nullptr || tab->get_presets() == nullptr)
++        throw BridgeError("SETTINGS_NOT_READY", "Current process settings are not available");
++    return *tab;
++}
++
++json preset_identity(const Preset& selected, const Preset& edited)
++{
++    return {
++        {"name", selected.name},
++        {"isSystem", selected.is_system},
++        {"isUser", selected.is_user()},
++        {"isDefault", selected.is_default},
++        {"isExternal", selected.is_external},
++        {"isProjectEmbedded", selected.is_project_embedded},
++        {"isDirty", edited.is_dirty},
++        {"canOverwrite", selected.can_overwrite()},
++    };
++}
++
++bool is_sensitive_setting_key(const std::string& key)
++{
++    const std::string lower = boost::algorithm::to_lower_copy(key);
++    static constexpr std::array<const char*, 12> denied{
++        "password",
++        "token",
++        "api_key",
++        "apikey",
++        "access_code",
++        "authorization",
++        "username",
++        "user_name",
++        "print_host",
++        "device_id",
++        "serial_number",
++        "cloud",
++    };
++    for (const char* fragment : denied)
++        if (lower.find(fragment) != std::string::npos)
++            return true;
++    return false;
++}
++
++json serialized_settings(const DynamicPrintConfig& config)
++{
++    json result = json::object();
++    std::vector<std::string> keys = config.keys();
++    std::sort(keys.begin(), keys.end());
++    for (const std::string& key : keys) {
++        if (is_sensitive_setting_key(key))
++            continue;
++        try {
++            result[key] = config.opt_serialize(key);
++        } catch (const std::exception& error) {
++            BOOST_LOG_TRIVIAL(warning)
++                << "PresetAssistantBridge: skipped unserializable setting "
++                << key << ": " << error.what();
++        }
++    }
++    return result;
++}
++
++std::string json_value_as_serialized(const json& value, const std::string& key)
++{
++    if (value.is_string())
++        return value.get<std::string>();
++    if (value.is_number() || value.is_boolean())
++        return value.dump();
++    throw BridgeError("INVALID_SETTING_VALUE",
++                      "Setting " + key + " must be a string, number, or boolean");
++}
++
++double validated_layer_height(const std::string& serialized,
++                              const PresetBundle& bundle)
++{
++    size_t consumed = 0;
++    double value = 0.;
++    try {
++        value = std::stod(serialized, &consumed);
++    } catch (const std::exception&) {
++        throw BridgeError("INVALID_SETTING_VALUE",
++                          "layer_height must be a number in millimeters");
++    }
++    if (consumed != serialized.size() || !std::isfinite(value))
++        throw BridgeError("INVALID_SETTING_VALUE",
++                          "layer_height must be a finite number in millimeters");
++
++    const DynamicPrintConfig full_config = bundle.full_config();
++    const auto* nozzles = full_config.option<ConfigOptionFloats>("nozzle_diameter");
++    if (nozzles == nullptr || nozzles->values.empty())
++        throw BridgeError("SETTINGS_NOT_READY",
++                          "Current nozzle diameter is not available");
++    const double max_height =
++        *std::min_element(nozzles->values.begin(), nozzles->values.end()) * 0.8;
++    if (value < 0.04 || value > max_height)
++        throw BridgeError(
++            "SETTING_OUT_OF_RANGE",
++            "layer_height must be between 0.04 mm and 80% of the smallest active nozzle diameter");
++    return value;
++}
++
++struct ValidatedChangeSet
++{
++    DynamicPrintConfig updated;
++    json               deltas = json::object();
++    json               before = json::object();
++    json               after  = json::object();
++};
++
++ValidatedChangeSet validate_process_changes(const json& changes,
++                                            const DynamicPrintConfig& current,
++                                            const PresetBundle& bundle)
++{
++    if (!changes.is_object() || changes.empty())
++        throw BridgeError("INVALID_REQUEST", "changes must be a non-empty object");
++
++    ValidatedChangeSet result{DynamicPrintConfig(current)};
++    for (auto it = changes.begin(); it != changes.end(); ++it) {
++        const std::string key = it.key();
++        if (key != "layer_height")
++            throw BridgeError("UNSUPPORTED_SETTING",
++                              "Unsupported process setting: " + key);
++
++        const std::string serialized = json_value_as_serialized(it.value(), key);
++        (void) validated_layer_height(serialized, bundle);
++
++        const ConfigOption* existing = result.updated.option(key);
++        if (existing == nullptr)
++            throw BridgeError("SETTING_NOT_AVAILABLE",
++                              "Current process setting is not available: " + key);
++
++        std::unique_ptr<ConfigOption> replacement(existing->clone());
++        if (!replacement->deserialize(serialized))
++            throw BridgeError("INVALID_SETTING_VALUE",
++                              "Invalid serialized value for " + key);
++
++        const std::string before = existing->serialize();
++        const std::string after  = replacement->serialize();
++        result.before[key] = before;
++        result.after[key]  = after;
++        result.deltas[key] = {{"before", before}, {"after", after}};
++        result.updated.set_key_value(key, replacement.release());
++    }
++    return result;
++}
++
++void apply_serialized_values(DynamicPrintConfig& target, const json& values)
++{
++    for (auto it = values.begin(); it != values.end(); ++it) {
++        const ConfigOption* existing = target.option(it.key());
++        if (existing == nullptr || !it.value().is_string())
++            throw BridgeError("ROLLBACK_CONFLICT",
++                              "Rollback setting is no longer available: " + it.key());
++        std::unique_ptr<ConfigOption> replacement(existing->clone());
++        if (!replacement->deserialize(it.value().get<std::string>()))
++            throw BridgeError("ROLLBACK_CONFLICT",
++                              "Rollback value is no longer valid: " + it.key());
++        target.set_key_value(it.key(), replacement.release());
++    }
++}
++
++bool values_match(const DynamicPrintConfig& config, const json& expected)
++{
++    for (auto it = expected.begin(); it != expected.end(); ++it) {
++        const ConfigOption* option = config.option(it.key());
++        if (option == nullptr || !it.value().is_string() ||
++            option->serialize() != it.value().get<std::string>())
++            return false;
++    }
++    return true;
++}
++
++fs::path normalized_workspace_path(const std::string& raw)
++{
++    const std::string trimmed = boost::algorithm::trim_copy(raw);
++    if (trimmed.empty())
++        throw BridgeError("INVALID_WORKSPACE", "Workspace path cannot be empty");
++
++    fs::path path(trimmed);
++    path.make_preferred();
++    if (!path.is_absolute())
++        throw BridgeError("INVALID_WORKSPACE", "Workspace path must be absolute");
++    path = fs::absolute(path).lexically_normal().make_preferred();
++    if (path == path.root_path())
++        throw BridgeError("INVALID_WORKSPACE", "Workspace cannot be a filesystem root");
++    return path;
++}
++
++std::string normalized_path_for_compare(const fs::path& value)
++{
++    std::string result = fs::absolute(value).lexically_normal().make_preferred().string();
++#ifdef _WIN32
++    result = boost::algorithm::to_lower_copy(result);
++#endif
++    return result;
++}
++
++bool path_is_within(const fs::path& candidate, const fs::path& root)
++{
++    const std::string candidate_value = normalized_path_for_compare(candidate);
++    std::string root_value = normalized_path_for_compare(root);
++    if (!root_value.empty() &&
++        root_value.back() != fs::path::preferred_separator)
++        root_value.push_back(fs::path::preferred_separator);
++    return boost::algorithm::starts_with(candidate_value, root_value);
++}
++
++std::string validated_new_preset_name(const json& params)
++{
++    const std::string name = boost::algorithm::trim_copy(require_string(params, "newName"));
++    if (name.size() > 128)
++        throw BridgeError("INVALID_PRESET_NAME", "Preset name is too long");
++    if (name == "." || name == ".." || name.back() == '.' || name.back() == ' ')
++        throw BridgeError("INVALID_PRESET_NAME", "Preset name has an unsafe ending");
++    static const std::string forbidden = "<>:\"/\\|?*";
++    for (unsigned char c : name)
++        if (c < 0x20 || forbidden.find(static_cast<char>(c)) != std::string::npos)
++            throw BridgeError("INVALID_PRESET_NAME",
++                              "Preset name contains an unsupported character");
++    return name;
++}
++
++void mark_project_dirty()
++{
++    Plater& plater = require_plater();
++    plater.set_plater_dirty(true);
++    plater.set_current_canvas_as_dirty();
++}
++
++void hash_add(uint64_t& hash, const std::string& value)
++{
++    for (unsigned char c : value) {
++        hash ^= c;
++        hash *= 1099511628211ULL;
++    }
++    hash ^= 0xff;
++    hash *= 1099511628211ULL;
++}
++
++void hash_config(uint64_t& hash, const DynamicPrintConfig& config)
++{
++    std::vector<std::string> keys = config.keys();
++    std::sort(keys.begin(), keys.end());
++    for (const std::string& key : keys) {
++        hash_add(hash, key);
++        try {
++            hash_add(hash, config.opt_serialize(key));
++        } catch (const std::exception&) {
++            hash_add(hash, "<unserializable>");
++        }
++    }
++}
++
++json current_preset_state(PresetBundle& bundle)
++{
++    json filaments = json::array();
++    for (const std::string& name : bundle.filament_presets) {
++        const Preset* preset = bundle.filaments.find_preset(name, false, true);
++        if (preset != nullptr)
++            filaments.push_back(preset_identity(*preset, *preset));
++    }
++    if (filaments.empty()) {
++        filaments.push_back(preset_identity(
++            bundle.filaments.get_selected_preset(),
++            bundle.filaments.get_edited_preset()));
++    }
++
++    return {
++        {"machine", preset_identity(
++            bundle.printers.get_selected_preset(),
++            bundle.printers.get_edited_preset())},
++        {"process", preset_identity(
++            bundle.prints.get_selected_preset(),
++            bundle.prints.get_edited_preset())},
++        {"filaments", std::move(filaments)},
++    };
++}
++
++json vec3_json(const Vec3d& value)
++{
++    return json::array({value.x(), value.y(), value.z()});
++}
++
++json project_placement_summary(Plater& plater)
++{
++    const Model& model = plater.model();
++    PartPlateList& plates = plater.get_partplate_list();
++    json objects = json::array();
++    size_t instance_count = 0;
++
++    for (size_t object_index = 0; object_index < model.objects.size(); ++object_index) {
++        const ModelObject* object = model.objects[object_index];
++        if (object == nullptr)
++            continue;
++
++        json instances = json::array();
++        for (size_t instance_index = 0;
++             instance_index < object->instances.size();
++             ++instance_index) {
++            const ModelInstance* instance = object->instances[instance_index];
++            if (instance == nullptr)
++                continue;
++
++            const int plate_index = plates.find_instance(
++                static_cast<int>(object_index),
++                static_cast<int>(instance_index));
++            const PartPlate* plate =
++                plate_index >= 0 ? plates.get_plate(plate_index) : nullptr;
++            instances.push_back({
++                {"instanceIndex", instance_index},
++                {"labeledId", instance->get_labeled_id()},
++                {"plateIndex", plate_index},
++                {"plateName", plate == nullptr ? std::string() : plate->get_plate_name()},
++                {"offsetMm", vec3_json(instance->get_offset())},
++                {"rotationRadians", vec3_json(instance->get_rotation())},
++                {"scale", vec3_json(instance->get_scaling_factor())},
++                {"mirror", vec3_json(instance->get_mirror())},
++                {"printable", object->printable && instance->printable},
++                {"insidePrintVolume",
++                    instance->print_volume_state == ModelInstancePVS_Inside},
++            });
++            ++instance_count;
++        }
++
++        objects.push_back({
++            {"objectIndex", object_index},
++            {"name", object->name},
++            {"printable", object->printable},
++            {"instances", std::move(instances)},
++        });
++    }
++
++    return {
++        {"objectCount", objects.size()},
++        {"instanceCount", instance_count},
++        {"objects", std::move(objects)},
++        {"units", {
++            {"offset", "millimeter"},
++            {"rotation", "radian"},
++            {"scale", "factor"},
++        }},
++        {"meshIncluded", false},
++        {"sourcePathsIncluded", false},
++    };
++}
++
++} // namespace
++
++struct PresetAssistantBridge::RollbackRecord
++{
++    std::string id;
++    uint64_t    valid_at_revision{0};
++    std::string destination;
++    std::string original_preset_name;
++    std::string target_preset_name;
++    json        before;
++    json        after;
++};
++
++PresetAssistantBridge::PresetAssistantBridge(std::string token)
++    : m_token(std::move(token))
++{
++    if (m_token.empty())
++        throw std::invalid_argument("Preset Assistant bridge token cannot be empty");
++}
++
++PresetAssistantBridge::~PresetAssistantBridge() = default;
++
++bool PresetAssistantBridge::is_trusted_source(
++    const std::string& candidate_url,
++    const std::string& trusted_page_url)
++{
++    const std::string trusted_origin = http_origin(trusted_page_url);
++    if (!trusted_origin.empty())
++        return http_origin(candidate_url) == trusted_origin;
++
++    const std::string trusted_file = normalized_file_url(trusted_page_url);
++    const std::string candidate_file = normalized_file_url(candidate_url);
++    return !trusted_file.empty() && candidate_file == trusted_file;
++}
++
++bool PresetAssistantBridge::preserves_created_preset_on_rollback(
++    const std::string& destination)
++{
++    return destination == "save-as-new-preset";
++}
++
++bool PresetAssistantBridge::has_explicit_panel_approval(const json& params)
++{
++    if (!params.is_object())
++        return false;
++    auto approved_at = params.find("approvedAt");
++    return approved_at != params.end() && approved_at->is_string() &&
++           !approved_at->get<std::string>().empty();
++}
++
++json PresetAssistantBridge::handle_message(
++    const std::string& raw_message,
++    const std::string& source_url,
++    const std::string& trusted_page_url)
++{
++    std::string request_id;
++    if (raw_message.size() > MAX_MESSAGE_BYTES)
++        return error_response(request_id, "MESSAGE_TOO_LARGE",
++                              "Native request exceeds the size limit");
++
++    json request = json::parse(raw_message, nullptr, false);
++    if (request.is_discarded() || !request.is_object())
++        return error_response(request_id, "MALFORMED_JSON",
++                              "Native request must be a JSON object");
++
++    auto id_it = request.find("requestId");
++    if (id_it != request.end() && id_it->is_string())
++        request_id = id_it->get<std::string>();
++
++    try {
++        reject_unknown_keys(
++            request,
++            {"requestId", "version", "token", "method", "expectedRevision", "params"},
++            "request");
++        if (request_id.empty() || request_id.size() > 128)
++            throw BridgeError("INVALID_REQUEST", "requestId is required and must be at most 128 characters");
++        if (!is_trusted_source(source_url, trusted_page_url))
++            throw BridgeError("UNTRUSTED_SOURCE", "Native request source is not trusted");
++        if (!request.contains("version") || !request["version"].is_number_unsigned() ||
++            request["version"].get<uint64_t>() != PROTOCOL_VERSION)
++            throw BridgeError("UNSUPPORTED_PROTOCOL", "Unsupported native bridge protocol version");
++        if (!request.contains("token") || !request["token"].is_string() ||
++            request["token"].get<std::string>() != m_token)
++            throw BridgeError("AUTHENTICATION_FAILED", "Native bridge authentication failed");
++
++        const std::string method = require_string(request, "method");
++        if (!is_supported_method(method))
++            throw BridgeError("UNKNOWN_METHOD", "Unknown native method: " + method);
++
++        const bool mutation = is_mutation_method(method);
++        uint64_t expected_revision = 0;
++        if (mutation) {
++            auto revision_it = request.find("expectedRevision");
++            if (revision_it == request.end() || !revision_it->is_number_unsigned())
++                throw BridgeError("INVALID_REQUEST",
++                                  "Mutating requests require expectedRevision");
++            expected_revision = revision_it->get<uint64_t>();
++            // Early check keeps stale requests deterministic even when Orca is
++            // not fully initialized (and is directly unit-testable).
++            if (expected_revision != m_revision)
++                throw BridgeError("REVISION_CONFLICT",
++                                  "Native state revision is stale");
++        }
++
++        const json params = request.contains("params") ? request["params"] : json::object();
++        if (!params.is_object())
++            throw BridgeError("INVALID_REQUEST", "params must be an object");
++        if (method == "proposal.apply") {
++            if (!has_explicit_panel_approval(params))
++                throw BridgeError(
++                    "CONSENT_REQUIRED",
++                    "proposal.apply requires a non-empty panel approval timestamp");
++        }
++
++        if (!wxIsMainThread())
++            throw BridgeError("WRONG_THREAD", "Native bridge must run on Orca's UI thread");
++        (void) require_app();
++        sync_revision();
++        if (mutation && expected_revision != m_revision)
++            throw BridgeError("REVISION_CONFLICT",
++                              "Native state changed before the request was applied");
++
++        return success_response(request_id, dispatch(method, params));
++    } catch (const BridgeError& error) {
++        BOOST_LOG_TRIVIAL(warning)
++            << "PresetAssistantBridge request " << request_id
++            << " failed with " << error.code << ": " << error.what();
++        return error_response(request_id, error.code, error.what());
++    } catch (const std::exception& error) {
++        BOOST_LOG_TRIVIAL(error)
++            << "PresetAssistantBridge request " << request_id
++            << " failed: " << error.what();
++        return error_response(request_id, "INTERNAL_ERROR",
++                              "Orca could not complete the native request");
++    }
++}
++
++json PresetAssistantBridge::dispatch(const std::string& method, const json& params)
++{
++    if (method == "state.get")          return state_get(params);
++    if (method == "settings.get")       return settings_get(params);
++    if (method == "project.get")        return project_get(params);
++    if (method == "project.export-copy") return project_export_copy(params);
++    if (method == "workspace.get")      return workspace_get(params);
++    if (method == "workspace.set")      return workspace_set(params);
++    if (method == "workspace.choose")   return workspace_choose(params);
++    if (method == "presets.refresh")    return presets_refresh(params);
++    if (method == "proposal.apply")     return proposal_apply(params);
++    if (method == "proposal.rollback")  return proposal_rollback(params);
++    if (method == "print.pending.get")  return pending_print_get(params);
++    throw BridgeError("UNKNOWN_METHOD", "Unknown native method: " + method);
++}
++
++json PresetAssistantBridge::state_get(const json& params)
++{
++    reject_unknown_keys(params, {}, "state.get params");
++    PresetBundle& bundle = require_bundle();
++    Plater& plater = require_plater();
++    AppConfig& app_config = require_app_config();
++
++    return {
++        {"protocolVersion", PROTOCOL_VERSION},
++        {"revision", m_revision},
++        {"workspaceConfigured", !app_config.get(CONFIG_SECTION, CONFIG_WORKSPACE_KEY).empty()},
++        {"workspaceActive", bundle.has_external_user_presets_root()},
++        {"restartRequired", m_pending_restart},
++        {"projectDirty", plater.is_project_dirty()},
++        {"presetsDirty", plater.is_presets_dirty()},
++        {"presets", current_preset_state(bundle)},
++        {"pendingPrintArchiveAvailable", !m_pending_print_archive.is_null()},
++        {"modelGeometryIncluded", false},
++    };
++}
++
++json PresetAssistantBridge::settings_get(const json& params)
++{
++    reject_unknown_keys(params, {"authorization"}, "settings.get params");
++    if (require_string(params, "authorization") != "settings:read")
++        throw BridgeError("CONSENT_REQUIRED",
++                          "settings.get requires settings:read authorization");
++
++    PresetBundle& bundle = require_bundle();
++    return {
++        {"authorization", "settings:read"},
++        {"presets", current_preset_state(bundle)},
++        {"effective", serialized_settings(bundle.full_config())},
++        {"modelGeometryIncluded", false},
++    };
++}
++
++json PresetAssistantBridge::project_get(const json& params)
++{
++    reject_unknown_keys(params, {"authorization"}, "project.get params");
++    const std::string authorization = require_string(params, "authorization");
++    if (authorization != "project:summary" &&
++        authorization != "project:placement")
++        throw BridgeError("CONSENT_REQUIRED",
++                          "project.get requires project:summary or project:placement authorization");
++
++    Plater& plater = require_plater();
++    json result = {
++        {"authorization", authorization},
++        {"projectDirty", plater.is_project_dirty()},
++        {"presetsDirty", plater.is_presets_dirty()},
++        {"hasLoadedObjects", !plater.model().objects.empty()},
++        {"meshIncluded", false},
++        {"sourcePathsIncluded", false},
++    };
++    if (authorization == "project:placement") {
++        result["placement"] = project_placement_summary(plater);
++        result["objectCountIncluded"] = true;
++        result["placementIncluded"] = true;
++    } else {
++        result["objectCountIncluded"] = false;
++        result["placementIncluded"] = false;
++    }
++    return result;
++}
++
++json PresetAssistantBridge::project_export_copy(const json& params)
++{
++    reject_unknown_keys(
++        params,
++        {"authorization", "destinationPath"},
++        "project.export-copy params");
++    if (require_string(params, "authorization") != "project:export-copy")
++        throw BridgeError(
++            "CONSENT_REQUIRED",
++            "project.export-copy requires project:export-copy authorization");
++
++    const fs::path output = fs::absolute(
++        fs::path(require_string(params, "destinationPath")))
++        .lexically_normal()
++        .make_preferred();
++    if (!output.is_absolute() ||
++        boost::algorithm::to_lower_copy(output.extension().string()) != ".3mf")
++        throw BridgeError(
++            "INVALID_EXPORT_PATH",
++            "Project archive copy must be an absolute .3mf path");
++
++    AppConfig& app_config = require_app_config();
++    const std::string configured =
++        app_config.get(CONFIG_SECTION, CONFIG_WORKSPACE_KEY);
++    if (configured.empty())
++        throw BridgeError(
++            "WORKSPACE_NOT_CONFIGURED",
++            "A workspace is required before exporting an archive copy");
++    const fs::path history_root =
++        (normalized_workspace_path(configured) / "PrintHistory")
++            .lexically_normal()
++            .make_preferred();
++    if (!fs::exists(history_root) || !fs::is_directory(history_root))
++        throw BridgeError(
++            "ARCHIVE_PATH_NOT_READY",
++            "The workspace helper must prepare PrintHistory before export");
++    if (!path_is_within(output, history_root) ||
++        !fs::exists(output.parent_path()) ||
++        !fs::is_directory(output.parent_path()) ||
++        !path_is_within(output.parent_path(), history_root))
++        throw BridgeError(
++            "EXPORT_PATH_NOT_ALLOWED",
++            "Project archive copy must stay inside the prepared PrintHistory directory");
++    if (fs::exists(output))
++        throw BridgeError(
++            "EXPORT_PATH_CONFLICT",
++            "Project archive copy destination already exists");
++
++    Plater& plater = require_plater();
++    if (plater.export_3mf(output, SaveStrategy::Silence) < 0 ||
++        !fs::exists(output) || !fs::is_regular_file(output))
++        throw BridgeError(
++            "PROJECT_EXPORT_FAILED",
++            "Orca could not export the requested project archive copy");
++
++    return {
++        {"authority", "orca"},
++        {"status", "exported"},
++        {"path", output.string()},
++        {"currentProjectPathChanged", false},
++    };
++}
++
++json PresetAssistantBridge::workspace_get(const json& params)
++{
++    reject_unknown_keys(params, {}, "workspace.get params");
++    AppConfig& app_config = require_app_config();
++    PresetBundle& bundle = require_bundle();
++
++    const std::string configured =
++        app_config.get(CONFIG_SECTION, CONFIG_WORKSPACE_KEY);
++    std::string active_workspace;
++    std::string active_root;
++    if (bundle.has_external_user_presets_root()) {
++        active_root = bundle.external_user_presets_root().string();
++        active_workspace = bundle.external_user_presets_root().parent_path().string();
++    }
++
++    bool restart_required = m_pending_restart;
++    if (!configured.empty() && !active_workspace.empty()) {
++        try {
++            restart_required = restart_required ||
++                normalized_path_for_compare(normalized_workspace_path(configured)) !=
++                normalized_path_for_compare(fs::path(active_workspace));
++        } catch (const BridgeError&) {
++            restart_required = true;
++        }
++    } else if (configured.empty() != active_workspace.empty()) {
++        restart_required = true;
++    }
++
++    return {
++        {"configuredWorkspace", configured},
++        {"activeWorkspace", active_workspace},
++        {"activeUserPresetsRoot", active_root},
++        {"restartRequired", restart_required},
++    };
++}
++
++json PresetAssistantBridge::workspace_set(const json& params)
++{
++    reject_unknown_keys(params, {"workspace"}, "workspace.set params");
++    AppConfig& app_config = require_app_config();
++    const fs::path workspace =
++        normalized_workspace_path(require_string(params, "workspace"));
++
++    const std::string old_value =
++        app_config.get(CONFIG_SECTION, CONFIG_WORKSPACE_KEY);
++    const std::string new_value = workspace.string();
++    if (old_value == new_value)
++        return workspace_get(json::object());
++
++    app_config.set(CONFIG_SECTION, CONFIG_WORKSPACE_KEY, new_value);
++    try {
++        app_config.save();
++    } catch (...) {
++        app_config.set(CONFIG_SECTION, CONFIG_WORKSPACE_KEY, old_value);
++        throw;
++    }
++
++    m_pending_restart = true;
++    clear_rollback();
++    advance_revision();
++    json result = workspace_get(json::object());
++    result["saved"] = true;
++    result["restartRequired"] = true;
++    result["activation"] = "restart-orca";
++    return result;
++}
++
++json PresetAssistantBridge::workspace_choose(const json& params)
++{
++    reject_unknown_keys(params, {}, "workspace.choose params");
++    GUI_App& app = require_app();
++    AppConfig& app_config = require_app_config();
++    const wxString initial = from_u8(
++        app_config.get(CONFIG_SECTION, CONFIG_WORKSPACE_KEY));
++    wxDirDialog dialog(
++        app.mainframe,
++        _L("Choose Orca Preset Assistant workspace"),
++        initial,
++        wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST);
++    if (dialog.ShowModal() != wxID_OK)
++        return {{"cancelled", true}, {"revision", m_revision}};
++
++    return workspace_set({{"workspace", into_u8(dialog.GetPath())}});
++}
++
++json PresetAssistantBridge::presets_refresh(const json& params)
++{
++    reject_unknown_keys(params, {}, "presets.refresh params");
++    // Repeating load_user_presets() skips duplicate names and would present a
++    // false success. Until a full user-only unload/reload transaction exists,
++    // an explicit restart is the only authoritative refresh.
++    throw BridgeError(
++        "RESTART_REQUIRED",
++        "Safe preset refresh requires restarting Orca; no files were reloaded");
++}
++
++json PresetAssistantBridge::proposal_apply(const json& params)
++{
++    reject_unknown_keys(
++        params,
++        {"destination", "presetType", "expectedPresetName", "newName", "changes", "reason", "approvedAt"},
++        "proposal.apply params");
++    const std::string destination = require_string(params, "destination");
++    const std::string preset_type = require_string(params, "presetType");
++    const std::string expected_preset_name =
++        require_string(params, "expectedPresetName");
++    const std::string reason      = require_string(params, "reason");
++    const std::string approved_at = require_string(params, "approvedAt");
++    (void) reason;
++    (void) approved_at;
++
++    if (preset_type != "process")
++        throw BridgeError("UNSUPPORTED_PRESET_TYPE",
++                          "The current native write whitelist supports process settings only");
++    if (destination != "current-project" &&
++        destination != "update-current-preset" &&
++        destination != "save-as-new-preset")
++        throw BridgeError("INVALID_DESTINATION",
++                          "An explicit supported destination is required");
++    if (!params.contains("changes"))
++        throw BridgeError("INVALID_REQUEST", "changes is required");
++
++    PresetBundle& bundle = require_bundle();
++    Tab& tab = require_process_tab();
++    PresetCollection& collection = *tab.get_presets();
++    const Preset selected_before = collection.get_selected_preset();
++    const DynamicPrintConfig config_before(*tab.get_config());
++    if (selected_before.name != expected_preset_name)
++        throw BridgeError(
++            "PRESET_SELECTION_CHANGED",
++            "The selected process preset changed after the proposal was prepared");
++
++    if (destination != "current-project" &&
++        !bundle.has_external_user_presets_root())
++        throw BridgeError("WORKSPACE_NOT_ACTIVE",
++                          "Permanent preset writes require an active external workspace");
++
++    std::string target_name = selected_before.name;
++    if (destination == "update-current-preset") {
++        if (!selected_before.is_user() || !selected_before.can_overwrite() ||
++            selected_before.is_system || selected_before.is_project_embedded)
++            throw BridgeError("SYSTEM_PRESET_PROTECTED",
++                              "The current preset is not an overwriteable user preset");
++    } else if (destination == "save-as-new-preset") {
++        target_name = validated_new_preset_name(params);
++        if (collection.find_preset(target_name, false, true) != nullptr)
++            throw BridgeError("PRESET_NAME_CONFLICT",
++                              "A preset with this name already exists");
++    } else if (params.contains("newName")) {
++        throw BridgeError("INVALID_REQUEST",
++                          "newName is only valid for save-as-new-preset");
++    }
++
++    ValidatedChangeSet validated =
++        validate_process_changes(params["changes"], config_before, bundle);
++    bool changed = false;
++    for (auto it = validated.deltas.begin(); it != validated.deltas.end(); ++it)
++        changed = changed ||
++            it.value()["before"].get<std::string>() !=
++            it.value()["after"].get<std::string>();
++    if (!changed) {
++        return {
++            {"authority", "orca"},
++            {"status", "unchanged"},
++            {"applied", false},
++            {"destination", destination},
++            {"targetPreset", target_name},
++            {"changes", validated.deltas},
++            {"before", validated.before},
++            {"after", validated.after},
++            {"reason", "already-at-requested-values"},
++        };
++    }
++
++    auto restore_after_failure = [&]() {
++        try {
++            if (destination == "save-as-new-preset") {
++                Preset* created = collection.find_preset(target_name, false, true);
++                if (created != nullptr && created->is_user())
++                    collection.delete_preset(target_name);
++                collection.select_preset_by_name(selected_before.name, true);
++                tab.load_current_preset();
++            } else {
++                tab.load_config(config_before);
++                if (destination == "update-current-preset")
++                    tab.save_preset(selected_before.name, false, false);
++            }
++        } catch (const std::exception& rollback_error) {
++            BOOST_LOG_TRIVIAL(error)
++                << "PresetAssistantBridge failed to restore after save error: "
++                << rollback_error.what();
++        }
++    };
++
++    try {
++        tab.load_config(validated.updated);
++        if (destination == "current-project") {
++            mark_project_dirty();
++        } else {
++            tab.save_preset(target_name, false, false);
++            Preset* saved = collection.find_preset(target_name, false, true);
++            if (saved == nullptr || !saved->is_user() || !fs::exists(saved->file) ||
++                !path_is_within(saved->file, bundle.external_user_presets_root()))
++                throw BridgeError("SAVE_VERIFICATION_FAILED",
++                                  "Orca did not create the expected workspace preset");
++            fs::path info_path(saved->file);
++            info_path.replace_extension(".info");
++            if (!fs::exists(info_path) || !values_match(saved->config, validated.after))
++                throw BridgeError("SAVE_VERIFICATION_FAILED",
++                                  "Saved preset verification failed");
++        }
++
++        if (!values_match(*tab.get_config(), validated.after))
++            throw BridgeError("APPLY_VERIFICATION_FAILED",
++                              "Live settings do not contain the requested values");
++    } catch (...) {
++        restore_after_failure();
++        throw;
++    }
++
++    advance_revision();
++    m_rollback = std::make_unique<RollbackRecord>();
++    m_rollback->id                   = new_id();
++    m_rollback->valid_at_revision    = m_revision;
++    m_rollback->destination          = destination;
++    m_rollback->original_preset_name = selected_before.name;
++    m_rollback->target_preset_name   = target_name;
++    m_rollback->before               = validated.before;
++    m_rollback->after                = validated.after;
++
++    return {
++        {"authority", "orca"},
++        {"status", "applied"},
++        {"applied", true},
++        {"destination", destination},
++        {"targetPreset", target_name},
++        {"changes", validated.deltas},
++        {"before", validated.before},
++        {"after", validated.after},
++        {"rollbackGuard", {
++            {"id", m_rollback->id},
++            {"validAtRevision", m_rollback->valid_at_revision},
++        }},
++    };
++}
++
++json PresetAssistantBridge::proposal_rollback(const json& params)
++{
++    reject_unknown_keys(params, {"guardId"}, "proposal.rollback params");
++    const std::string guard_id = require_string(params, "guardId");
++    if (!m_rollback || guard_id != m_rollback->id ||
++        m_rollback->valid_at_revision != m_revision)
++        throw BridgeError("ROLLBACK_GUARD_EXPIRED",
++                          "Rollback guard is missing, stale, or already used");
++
++    Tab& tab = require_process_tab();
++    PresetCollection& collection = *tab.get_presets();
++    const RollbackRecord record = *m_rollback;
++
++    if (!values_match(*tab.get_config(), record.after))
++        throw BridgeError("ROLLBACK_CONFLICT",
++                          "Current settings changed after the proposal was applied");
++
++    if (preserves_created_preset_on_rollback(record.destination)) {
++        Preset* created = collection.find_preset(
++            record.target_preset_name, false, true);
++        if (created == nullptr || !created->is_user())
++            throw BridgeError("ROLLBACK_CONFLICT",
++                              "The newly saved preset is no longer available");
++        if (!collection.select_preset_by_name(record.original_preset_name, true))
++            throw BridgeError("ROLLBACK_CONFLICT",
++                              "The original preset is no longer available");
++        tab.load_current_preset();
++        mark_project_dirty();
++    } else {
++        DynamicPrintConfig restored(*tab.get_config());
++        apply_serialized_values(restored, record.before);
++        tab.load_config(restored);
++        if (record.destination == "update-current-preset") {
++            const Preset& selected = collection.get_selected_preset();
++            if (selected.name != record.original_preset_name ||
++                !selected.is_user() || !selected.can_overwrite())
++                throw BridgeError("ROLLBACK_CONFLICT",
++                                  "The original user preset is no longer selected");
++            tab.save_preset(selected.name, false, false);
++        } else {
++            mark_project_dirty();
++        }
++    }
++
++    advance_revision();
++    clear_rollback();
++    return {
++        {"authority", "orca"},
++        {"status", "rolled-back"},
++        {"rolledBack", true},
++        {"destination", record.destination},
++        {"targetPreset", record.original_preset_name},
++        {"preservedNewPreset",
++            record.destination == "save-as-new-preset"
++                ? json(record.target_preset_name)
++                : json(nullptr)},
++        {"before", record.after},
++        {"after", record.before},
++        {"restored", record.before},
++    };
++}
++
++json PresetAssistantBridge::pending_print_get(const json& params)
++{
++    reject_unknown_keys(params, {"authorization"}, "print.pending.get params");
++    if (require_string(params, "authorization") != "print-archive:read")
++        throw BridgeError("CONSENT_REQUIRED",
++                          "print.pending.get requires print-archive:read authorization");
++    return {
++        {"pending", m_pending_print_archive.is_null()
++            ? json(nullptr)
++            : m_pending_print_archive},
++    };
++}
++
++json PresetAssistantBridge::notify_print_submitted(const std::string& project_name)
++{
++    if (!wxIsMainThread())
++        throw std::runtime_error("Print submission notification must run on Orca's UI thread");
++    PresetBundle& bundle = require_bundle();
++    AppConfig& app_config = require_app_config();
++
++    const auto submitted_at = std::chrono::duration_cast<std::chrono::milliseconds>(
++        std::chrono::system_clock::now().time_since_epoch()).count();
++    const std::string workspace =
++        app_config.get(CONFIG_SECTION, CONFIG_WORKSPACE_KEY);
++
++    m_pending_print_archive = {
++        {"archiveSchemaVersion", 1},
++        {"archiveId", new_id()},
++        {"status", "pending"},
++        {"submittedAtUnixMs", submitted_at},
++        {"projectName", project_name},
++        {"workspace", workspace},
++        {"includeProjectFile", false},
++        {"projectExportSupported", true},
++        {"projectExportMethod", "project.export-copy"},
++        {"projectCopyIncludedByDefault", false},
++        {"presets", current_preset_state(bundle)},
++        {"effectiveSettings", serialized_settings(bundle.full_config())},
++        {"sensitiveConnectionSettingsIncluded", false},
++        {"modelGeometryIncluded", false},
++        {"persistenceOwner", "workspace-helper"},
++    };
++    clear_rollback();
++    advance_revision();
++    m_pending_print_archive["revision"] = m_revision;
++    return m_pending_print_archive;
++}
++
++json PresetAssistantBridge::success_response(
++    const std::string& request_id,
++    json data) const
++{
++    return {
++        {"requestId", request_id},
++        {"ok", true},
++        {"revision", m_revision},
++        {"data", std::move(data)},
++    };
++}
++
++json PresetAssistantBridge::error_response(
++    const std::string& request_id,
++    const std::string& code,
++    const std::string& message) const
++{
++    return {
++        {"requestId", request_id},
++        {"ok", false},
++        {"revision", m_revision},
++        {"error", {
++            {"code", code},
++            {"message", message},
++        }},
++    };
++}
++
++void PresetAssistantBridge::sync_revision()
++{
++    const std::string fingerprint = compute_state_fingerprint();
++    if (m_last_fingerprint.empty()) {
++        m_last_fingerprint = fingerprint;
++        return;
++    }
++    if (fingerprint != m_last_fingerprint) {
++        ++m_revision;
++        m_last_fingerprint = fingerprint;
++        clear_rollback();
++    }
++}
++
++void PresetAssistantBridge::advance_revision()
++{
++    ++m_revision;
++    m_last_fingerprint = compute_state_fingerprint();
++}
++
++std::string PresetAssistantBridge::compute_state_fingerprint() const
++{
++    PresetBundle& bundle = require_bundle();
++    Plater& plater = require_plater();
++    AppConfig& app_config = require_app_config();
++    uint64_t hash = 1469598103934665603ULL;
++
++    hash_add(hash, bundle.printers.get_selected_preset_name());
++    hash_config(hash, bundle.printers.get_edited_preset().config);
++    hash_add(hash, bundle.prints.get_selected_preset_name());
++    hash_config(hash, bundle.prints.get_edited_preset().config);
++    for (const std::string& name : bundle.filament_presets) {
++        hash_add(hash, name);
++        const Preset* filament = bundle.filaments.find_preset(name, false, true);
++        if (filament != nullptr)
++            hash_config(hash, filament->config);
++    }
++    hash_add(hash, plater.is_project_dirty() ? "project-dirty" : "project-clean");
++    hash_add(hash, plater.is_presets_dirty() ? "presets-dirty" : "presets-clean");
++    hash_add(hash, app_config.get(CONFIG_SECTION, CONFIG_WORKSPACE_KEY));
++
++    std::ostringstream stream;
++    stream << std::hex << std::setw(16) << std::setfill('0') << hash;
++    return stream.str();
++}
++
++void PresetAssistantBridge::clear_rollback()
++{
++    m_rollback.reset();
++}
++
++}} // namespace Slic3r::GUI
+diff --git a/src/slic3r/GUI/PresetAssistantPanel.hpp b/src/slic3r/GUI/PresetAssistantPanel.hpp
+--- a/src/slic3r/GUI/PresetAssistantPanel.hpp
++++ b/src/slic3r/GUI/PresetAssistantPanel.hpp
+@@ -4,11 +4,16 @@
+ #include <wx/panel.h>
+ #include <wx/string.h>
+ #include <wx/webview.h>
+ 
++#include <memory>
++#include <string>
++
+ class wxCommandEvent;
+ 
+ namespace Slic3r { namespace GUI {
+ 
++class PresetAssistantBridge;
++
+ // Product-owned main-window page for the Orca Preset Assistant.
+ //
+ // The page loads bundled static UI by default. Developers may set
+@@ -18,6 +23,7 @@ class PresetAssistantPanel final : public wxPanel
+ {
+ public:
+     explicit PresetAssistantPanel(wxWindow* parent);
++    ~PresetAssistantPanel() override;
+ 
+     // Re-resolve the configured URL when the page becomes active. This lets a
+     // developer start or restart the localhost UI without restarting Orca.
+@@ -25,17 +31,25 @@ public:
+     void reload();
+ 
+     const wxString& page_url() const { return m_page_url; }
++    void notify_print_submission(const std::string& project_name);
+ 
+ private:
+     wxString resolve_page_url();
+     void     load_page();
++    void     configure_native_bridge();
++    void     send_native_event(const char* event_name, const std::string& payload);
+     void     on_loaded(wxWebViewEvent& event);
+     void     on_error(wxWebViewEvent& event);
++    void     on_navigating(wxWebViewEvent& event);
++    void     on_script_message(wxWebViewEvent& event);
+     void     on_webview_recreated(wxCommandEvent& event);
+ 
+     wxWebView* m_browser{nullptr};
+     wxString   m_page_url;
+     bool       m_using_localhost{false};
+     bool       m_load_failed{false};
+     bool       m_showing_error_page{false};
++
++    std::string                            m_bridge_token;
++    std::unique_ptr<PresetAssistantBridge> m_bridge;
+ };
+diff --git a/src/slic3r/GUI/PresetAssistantPanel.cpp b/src/slic3r/GUI/PresetAssistantPanel.cpp
+--- a/src/slic3r/GUI/PresetAssistantPanel.cpp
++++ b/src/slic3r/GUI/PresetAssistantPanel.cpp
+@@ -1,4 +1,5 @@
+ #include "PresetAssistantPanel.hpp"
++#include "PresetAssistantBridge.hpp"
+ 
+ #include "GUI_App.hpp"
+ #include "GUI_Utils.hpp"
+@@ -12,7 +13,11 @@
+ #include <boost/filesystem.hpp>
+ #include <boost/log/trivial.hpp>
++#include <boost/nowide/fstream.hpp>
++#include <boost/uuid/uuid_generators.hpp>
++#include <boost/uuid/uuid_io.hpp>
+ 
+ #include <array>
++#include <iterator>
+ #include <string>
+ 
+ #include <wx/sizer.h>
+@@ -64,6 +68,29 @@ const char* load_error_html()
+ </html>)HTML";
+ }
+ 
++std::string native_bootstrap_script(const std::string& token)
++{
++    const std::string bootstrap =
++        "(function(){Object.defineProperty(window,'__ORCA_PRESET_ASSISTANT_NATIVE__',"
++        "{configurable:true,value:Object.freeze({version:1,handler:'wx',token:'" +
++        token +
++        "'})});})();";
++    const boost::filesystem::path bridge_path =
++        (boost::filesystem::path(resources_dir()) /
++         "web/orca_preset_assistant/bridge.js").make_preferred();
++    boost::nowide::ifstream stream(bridge_path.string(), std::ios::binary);
++    if (!stream) {
++        BOOST_LOG_TRIVIAL(error)
++            << "PresetAssistantPanel: native bridge script is missing: "
++            << bridge_path.string();
++        return bootstrap;
++    }
++    const std::string adapter(
++        std::istreambuf_iterator<char>(stream),
++        std::istreambuf_iterator<char>());
++    return bootstrap + "\n" + adapter;
++}
++
+ } // namespace
+ 
+ PresetAssistantPanel::PresetAssistantPanel(wxWindow* parent)
+@@ -83,13 +97,21 @@ PresetAssistantPanel::PresetAssistantPanel(wxWindow* parent)
+     sizer->Add(m_browser, wxSizerFlags(1).Expand());
+     SetSizer(sizer);
+ 
++    m_bridge_token = boost::uuids::to_string(boost::uuids::random_generator()());
++    m_bridge = std::make_unique<PresetAssistantBridge>(m_bridge_token);
++    configure_native_bridge();
++
+     m_browser->Bind(wxEVT_WEBVIEW_LOADED, &PresetAssistantPanel::on_loaded, this);
+     m_browser->Bind(wxEVT_WEBVIEW_ERROR, &PresetAssistantPanel::on_error, this);
++    m_browser->Bind(wxEVT_WEBVIEW_NAVIGATING, &PresetAssistantPanel::on_navigating, this);
++    m_browser->Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &PresetAssistantPanel::on_script_message, this);
+     m_browser->Bind(EVT_WEBVIEW_RECREATED, &PresetAssistantPanel::on_webview_recreated, this);
+ 
+     reload();
+ }
+ 
++PresetAssistantPanel::~PresetAssistantPanel() = default;
++
+ void PresetAssistantPanel::activate()
+ {
+     if (!m_browser)
+@@ -155,6 +177,28 @@ void PresetAssistantPanel::load_page()
+     WebView::LoadUrl(m_browser, m_page_url);
+ }
+ 
++void PresetAssistantPanel::configure_native_bridge()
++{
++    if (!m_browser || m_bridge_token.empty())
++        return;
++    if (!m_browser->AddUserScript(
++            wxString::FromUTF8(native_bootstrap_script(m_bridge_token))))
++        BOOST_LOG_TRIVIAL(error)
++            << "PresetAssistantPanel: failed to install native bootstrap script";
++}
++
++void PresetAssistantPanel::send_native_event(
++    const char* event_name,
++    const std::string& payload)
++{
++    if (!m_browser)
++        return;
++    const std::string script =
++        "window.dispatchEvent(new CustomEvent('" + std::string(event_name) +
++        "',{detail:" + payload + "}));";
++    WebView::RunScript(m_browser, wxString::FromUTF8(script));
++}
++
+ void PresetAssistantPanel::on_loaded(wxWebViewEvent& event)
+ {
+     if (!m_showing_error_page)
+@@ -174,8 +214,60 @@ void PresetAssistantPanel::on_error(wxWebViewEvent& event)
+     event.Skip();
+ }
+ 
++void PresetAssistantPanel::on_navigating(wxWebViewEvent& event)
++{
++    const std::string target = into_u8(event.GetURL());
++    if (m_showing_error_page && target == "about:blank") {
++        event.Skip();
++        return;
++    }
++    if (!m_bridge || !PresetAssistantBridge::is_trusted_source(
++            target, into_u8(m_page_url))) {
++        BOOST_LOG_TRIVIAL(warning)
++            << "PresetAssistantPanel: blocked navigation outside trusted page";
++        event.Veto();
++        return;
++    }
++    event.Skip();
++}
++
++void PresetAssistantPanel::on_script_message(wxWebViewEvent& event)
++{
++    if (!m_bridge)
++        return;
++    wxString source = event.GetURL();
++    if (source.empty() && m_browser)
++        source = m_browser->GetCurrentURL();
++    const nlohmann::json response = m_bridge->handle_message(
++        into_u8(event.GetString()),
++        into_u8(source),
++        into_u8(m_page_url));
++    send_native_event(
++        "orca-preset-assistant-response",
++        response.dump());
++}
++
++void PresetAssistantPanel::notify_print_submission(
++    const std::string& project_name)
++{
++    if (!m_bridge)
++        return;
++    try {
++        const nlohmann::json payload =
++            m_bridge->notify_print_submitted(project_name);
++        send_native_event(
++            "orca-preset-assistant-print-submitted",
++            payload.dump());
++    } catch (const std::exception& error) {
++        BOOST_LOG_TRIVIAL(error)
++            << "PresetAssistantPanel: print archive event failed: "
++            << error.what();
++    }
++}
++
+ void PresetAssistantPanel::on_webview_recreated(wxCommandEvent& event)
+ {
++    configure_native_bridge();
+     load_page();
+     event.Skip();
+ }
+diff --git a/src/slic3r/GUI/MainFrame.hpp b/src/slic3r/GUI/MainFrame.hpp
+--- a/src/slic3r/GUI/MainFrame.hpp
++++ b/src/slic3r/GUI/MainFrame.hpp
+@@ -332,6 +332,7 @@ public:
+     void        request_select_tab(TabPosition pos);
+     int         get_calibration_curr_tab();
+     void        select_preset_assistant();
++    void        notify_preset_assistant_print_submitted(const std::string& project_name);
+     void        select_view(const std::string& direction);
+     // Propagate changed configuration from the Tab to the Plater and save changes to the AppConfig
+     void        on_config_changed(DynamicPrintConfig* cfg) const ;
+diff --git a/src/slic3r/GUI/MainFrame.cpp b/src/slic3r/GUI/MainFrame.cpp
+--- a/src/slic3r/GUI/MainFrame.cpp
++++ b/src/slic3r/GUI/MainFrame.cpp
+@@ -3965,5 +3965,12 @@ void MainFrame::select_preset_assistant()
+     m_preset_assistant->activate();
+ }
+ 
++void MainFrame::notify_preset_assistant_print_submitted(
++    const std::string& project_name)
++{
++    if (m_preset_assistant)
++        m_preset_assistant->notify_print_submission(project_name);
++}
++
+ //BBS GUI refactor: remove unused layout new/dlg
+ void MainFrame::select_tab(size_t tab/* = size_t(-1)*/)
+diff --git a/src/slic3r/GUI/Jobs/PrintJob.cpp b/src/slic3r/GUI/Jobs/PrintJob.cpp
+--- a/src/slic3r/GUI/Jobs/PrintJob.cpp
++++ b/src/slic3r/GUI/Jobs/PrintJob.cpp
+@@ -675,6 +675,16 @@ void PrintJob::process(Ctl &ctl)
+ 
+         wxGetApp().plater()->record_slice_preset("print");
+ 
++        // Export an initial, pending archive payload only after the printer
++        // submission has returned success. Persistence is owned by the
++        // workspace helper, not this worker thread.
++        const std::string submitted_project_name = m_project_name;
++        wxGetApp().CallAfter([submitted_project_name]() {
++            if (wxGetApp().mainframe)
++                wxGetApp().mainframe->notify_preset_assistant_print_submitted(
++                    submitted_project_name);
++        });
++
+         BOOST_LOG_TRIVIAL(error) << "print_job: send ok.";
+         wxCommandEvent* evt = new wxCommandEvent(m_print_job_completed_id);
+         if (!m_completed_evt_data.empty())
+diff --git a/resources/web/orca_preset_assistant/bridge.js b/resources/web/orca_preset_assistant/bridge.js
+new file mode 100644
+--- /dev/null
++++ b/resources/web/orca_preset_assistant/bridge.js
+@@ -0,0 +1,131 @@
++(() => {
++  "use strict";
++
++  const native = window.__ORCA_PRESET_ASSISTANT_NATIVE__;
++  const transport = window.wx;
++  if (!native || native.version !== 1 || !transport?.postMessage) {
++    window.OrcaPresetAssistant = Object.freeze({
++      available: false,
++      request: () =>
++        Promise.reject(
++          Object.assign(new Error("Orca native bridge is unavailable"), {
++            code: "BRIDGE_UNAVAILABLE",
++          }),
++        ),
++    });
++    return;
++  }
++
++  let revision = 1;
++  const pending = new Map();
++  const mutationMethods = new Set([
++    "workspace.set",
++    "workspace.choose",
++    "project.export-copy",
++    "proposal.apply",
++    "proposal.rollback",
++  ]);
++
++  const randomId = () =>
++    globalThis.crypto?.randomUUID?.() ??
++    `request-${Date.now()}-${Math.random().toString(16).slice(2)}`;
++
++  const request = (method, params = {}, options = {}) => {
++    const requestId = randomId();
++    const expectedRevision =
++      options.expectedRevision ?? (mutationMethods.has(method) ? revision : undefined);
++    const envelope = {
++      requestId,
++      version: 1,
++      token: native.token,
++      method,
++      params,
++    };
++    if (expectedRevision !== undefined) {
++      envelope.expectedRevision = expectedRevision;
++    }
++
++    return new Promise((resolve, reject) => {
++      const timeout = window.setTimeout(() => {
++        pending.delete(requestId);
++        reject(
++          Object.assign(new Error(`Native request timed out: ${method}`), {
++            code: "NATIVE_TIMEOUT",
++            requestId,
++          }),
++        );
++      }, options.timeoutMs ?? 15000);
++      pending.set(requestId, { resolve, reject, timeout });
++      transport.postMessage(JSON.stringify(envelope));
++    });
++  };
++
++  window.addEventListener("orca-preset-assistant-response", (event) => {
++    const response = event.detail;
++    if (!response || typeof response.requestId !== "string") return;
++    if (Number.isSafeInteger(response.revision)) revision = response.revision;
++    const waiter = pending.get(response.requestId);
++    if (!waiter) return;
++    pending.delete(response.requestId);
++    window.clearTimeout(waiter.timeout);
++    if (response.ok) {
++      waiter.resolve(response);
++      return;
++    }
++    const error = Object.assign(
++      new Error(response.error?.message ?? "Native request failed"),
++      {
++        code: response.error?.code ?? "NATIVE_ERROR",
++        requestId: response.requestId,
++        revision: response.revision,
++      },
++    );
++    waiter.reject(error);
++  });
++
++  window.addEventListener(
++    "orca-preset-assistant-print-submitted",
++    (event) => {
++      if (Number.isSafeInteger(event.detail?.revision)) {
++        revision = event.detail.revision;
++      }
++      window.dispatchEvent(
++        new CustomEvent("orca-preset-assistant:print-submitted", {
++          detail: event.detail,
++        }),
++      );
++    },
++  );
++
++  window.OrcaPresetAssistant = Object.freeze({
++    available: true,
++    request,
++    get revision() {
++      return revision;
++    },
++    state: () => request("state.get"),
++    settings: () =>
++      request("settings.get", { authorization: "settings:read" }),
++    project: () =>
++      request("project.get", { authorization: "project:summary" }),
++    projectPlacement: () =>
++      request("project.get", { authorization: "project:placement" }),
++    exportProjectCopy: (destinationPath) =>
++      request("project.export-copy", {
++        authorization: "project:export-copy",
++        destinationPath,
++      }),
++    workspace: () => request("workspace.get"),
++    chooseWorkspace: () => request("workspace.choose"),
++    setWorkspace: (workspace) =>
++      request("workspace.set", { workspace }),
++    refreshPresets: () => request("presets.refresh"),
++    applyProposal: (proposal) => request("proposal.apply", proposal),
++    rollbackProposal: (guardId) =>
++      request("proposal.rollback", { guardId }),
++    pendingPrintArchive: () =>
++      request("print.pending.get", {
++        authorization: "print-archive:read",
++      }),
++  });
++})();
+diff --git a/resources/web/orca_preset_assistant/index.html b/resources/web/orca_preset_assistant/index.html
+--- a/resources/web/orca_preset_assistant/index.html
++++ b/resources/web/orca_preset_assistant/index.html
+@@ -26,6 +26,13 @@
+         background:
+           radial-gradient(circle at 15% 15%, #27313a 0, transparent 35%),
+           #15171b;
++        padding: 24px;
++      }
++
++      .actions {
++        display: flex;
++        gap: 10px;
++        margin-top: 24px;
+       }
+ 
+       main {
+@@ -49,9 +55,36 @@
+         line-height: 1.7;
+       }
+ 
++      button {
++        border: 1px solid #456678;
++        border-radius: 8px;
++        padding: 9px 13px;
++        background: #263946;
++        color: #f3f4f6;
++        cursor: pointer;
++      }
++
++      pre {
++        max-height: 280px;
++        overflow: auto;
++        margin: 20px 0 0;
++        padding: 14px;
++        border-radius: 10px;
++        background: #14171b;
++        color: #cbd5e1;
++        white-space: pre-wrap;
++        word-break: break-word;
++      }
++
++      .note {
++        margin-top: 14px;
++        color: #8f98a7;
++        font-size: 12px;
++      }
++
+       .status {
+         display: inline-flex;
+-        margin-top: 24px;
++        margin-top: 18px;
+         padding: 7px 11px;
+         border: 1px solid #315847;
+         border-radius: 999px;
+@@ -66,9 +98,34 @@
+       <h1>Orca Preset Assistant</h1>
+       <p>
+-        The native Orca panel is connected. This bootstrap page is replaced by
+-        the packaged product UI during the frontend integration stage.
++        Native integration diagnostics. This is not the final product panel;
++        the packaged React UI will reuse the same request/response API.
+       </p>
+-      <span class="status">Native host ready</span>
++      <span class="status" id="status">Checking native bridge…</span>
++      <div class="actions">
++        <button id="read-state" type="button">Read native state</button>
++        <button id="choose-workspace" type="button">Choose workspace</button>
++      </div>
++      <p class="note">
++        Model geometry and part placement are never returned by this page.
++      </p>
++      <pre id="output">No native request sent.</pre>
+     </main>
++    <script>
++      const api = window.OrcaPresetAssistant;
++      const status = document.querySelector("#status");
++      const output = document.querySelector("#output");
++      status.textContent = api?.available
++        ? "Authenticated native bridge ready"
++        : "Native bridge unavailable";
++      const show = (value) => {
++        output.textContent = JSON.stringify(value, null, 2);
++      };
++      document.querySelector("#read-state").addEventListener("click", async () => {
++        try { show(await api.state()); } catch (error) { show({ code: error.code, message: error.message }); }
++      });
++      document.querySelector("#choose-workspace").addEventListener("click", async () => {
++        try { show(await api.chooseWorkspace()); } catch (error) { show({ code: error.code, message: error.message }); }
++      });
++    </script>
+   </body>
+ </html>
+diff --git a/tests/slic3rutils/CMakeLists.txt b/tests/slic3rutils/CMakeLists.txt
+--- a/tests/slic3rutils/CMakeLists.txt
++++ b/tests/slic3rutils/CMakeLists.txt
+@@ -6,6 +6,7 @@ add_executable(${_TEST_NAME}_tests
+     test_network_versions.cpp
+     test_action_source.cpp
+     test_plugin_host_api.cpp
++    test_preset_assistant_bridge.cpp
+     test_plugin_capability_config.cpp
+     test_plugin_config.cpp
+     test_plugin_capabilities_in_use.cpp
+diff --git a/tests/slic3rutils/test_preset_assistant_bridge.cpp b/tests/slic3rutils/test_preset_assistant_bridge.cpp
+new file mode 100644
+--- /dev/null
++++ b/tests/slic3rutils/test_preset_assistant_bridge.cpp
+@@ -0,0 +1,184 @@
++#include <catch2/catch_all.hpp>
++
++#include <nlohmann/json.hpp>
++
++#include "slic3r/GUI/PresetAssistantBridge.hpp"
++
++using Slic3r::GUI::PresetAssistantBridge;
++using json = nlohmann::json;
++
++namespace {
++
++json request(std::string token = "test-token",
++             std::string method = "state.get")
++{
++    return {
++        {"requestId", "request-1"},
++        {"version", 1},
++        {"token", std::move(token)},
++        {"method", std::move(method)},
++        {"params", json::object()},
++    };
++}
++
++} // namespace
++
++TEST_CASE("Preset Assistant bridge accepts only its trusted page origin",
++          "[PresetAssistant][Bridge]")
++{
++    CHECK(PresetAssistantBridge::is_trusted_source(
++        "http://localhost:5173/app",
++        "http://localhost:5173/index.html?lang=en_US"));
++    CHECK(PresetAssistantBridge::is_trusted_source(
++        "https://127.0.0.1:9443/other",
++        "https://127.0.0.1:9443/index.html"));
++    CHECK_FALSE(PresetAssistantBridge::is_trusted_source(
++        "http://localhost:5174/app",
++        "http://localhost:5173/index.html"));
++    CHECK_FALSE(PresetAssistantBridge::is_trusted_source(
++        "https://example.com/",
++        "http://localhost:5173/index.html"));
++
++#ifdef _WIN32
++    CHECK(PresetAssistantBridge::is_trusted_source(
++        "file:///C:/Program%20Files/Orca/resources/web/orca_preset_assistant/index.html?lang=en_US",
++        "file://C:\\Program Files\\Orca\\resources\\web\\orca_preset_assistant\\index.html?lang=en_US"));
++#else
++    CHECK(PresetAssistantBridge::is_trusted_source(
++        "file:///opt/orca/resources/web/orca_preset_assistant/index.html",
++        "file:///opt/orca/resources/web/orca_preset_assistant/index.html?lang=en_US"));
++#endif
++    CHECK_FALSE(PresetAssistantBridge::is_trusted_source(
++        "file:///tmp/not-the-assistant.html",
++        "file:///opt/orca/resources/web/orca_preset_assistant/index.html"));
++}
++
++TEST_CASE("Preset Assistant bridge rejects malformed messages before runtime access",
++          "[PresetAssistant][Bridge]")
++{
++    PresetAssistantBridge bridge("test-token");
++    const std::string trusted = "http://localhost:5173/index.html";
++
++    SECTION("malformed JSON") {
++        const json response = bridge.handle_message(
++            "{not-json", trusted, trusted);
++        CHECK_FALSE(response["ok"].get<bool>());
++        CHECK(response["error"]["code"] == "MALFORMED_JSON");
++    }
++
++    SECTION("missing request id") {
++        json value = request();
++        value.erase("requestId");
++        const json response = bridge.handle_message(
++            value.dump(), trusted, trusted);
++        CHECK_FALSE(response["ok"].get<bool>());
++        CHECK(response["error"]["code"] == "INVALID_REQUEST");
++    }
++
++    SECTION("unexpected envelope field") {
++        json value = request();
++        value["filePath"] = "C:/secret";
++        const json response = bridge.handle_message(
++            value.dump(), trusted, trusted);
++        CHECK_FALSE(response["ok"].get<bool>());
++        CHECK(response["error"]["code"] == "INVALID_REQUEST");
++    }
++
++    SECTION("wrong protocol") {
++        json value = request();
++        value["version"] = 2;
++        const json response = bridge.handle_message(
++            value.dump(), trusted, trusted);
++        CHECK_FALSE(response["ok"].get<bool>());
++        CHECK(response["error"]["code"] == "UNSUPPORTED_PROTOCOL");
++        CHECK(response["requestId"] == "request-1");
++    }
++}
++
++TEST_CASE("Preset Assistant bridge authenticates token and source before dispatch",
++          "[PresetAssistant][Bridge]")
++{
++    PresetAssistantBridge bridge("test-token");
++    const std::string trusted = "http://localhost:5173/index.html";
++
++    SECTION("wrong token") {
++        const json response = bridge.handle_message(
++            request("wrong-token").dump(), trusted, trusted);
++        CHECK_FALSE(response["ok"].get<bool>());
++        CHECK(response["error"]["code"] == "AUTHENTICATION_FAILED");
++    }
++
++    SECTION("wrong origin") {
++        const json response = bridge.handle_message(
++            request().dump(), "http://localhost:5174/index.html", trusted);
++        CHECK_FALSE(response["ok"].get<bool>());
++        CHECK(response["error"]["code"] == "UNTRUSTED_SOURCE");
++    }
++
++    SECTION("unknown method") {
++        const json response = bridge.handle_message(
++            request("test-token", "filesystem.read").dump(), trusted, trusted);
++        CHECK_FALSE(response["ok"].get<bool>());
++        CHECK(response["error"]["code"] == "UNKNOWN_METHOD");
++    }
++}
++
++TEST_CASE("Preset Assistant bridge rejects stale writes without touching Orca",
++          "[PresetAssistant][Bridge]")
++{
++    PresetAssistantBridge bridge("test-token");
++    const std::string trusted = "http://localhost:5173/index.html";
++    json value = request("test-token", "proposal.apply");
++    value["expectedRevision"] = 0;
++    value["params"] = {
++        {"destination", "current-project"},
++        {"presetType", "process"},
++        {"expectedPresetName", "0.20mm Standard"},
++        {"changes", {{"layer_height", "0.20"}}},
++        {"reason", "test"},
++    };
++
++    const json response = bridge.handle_message(
++        value.dump(), trusted, trusted);
++    CHECK_FALSE(response["ok"].get<bool>());
++    CHECK(response["error"]["code"] == "REVISION_CONFLICT");
++    CHECK(response["revision"] == 1);
++}
++
++TEST_CASE("Preset Assistant bridge requires explicit panel approval before runtime access",
++          "[PresetAssistant][Bridge]")
++{
++    CHECK(PresetAssistantBridge::has_explicit_panel_approval(
++        {{"approvedAt", "2026-07-29T21:45:00Z"}}));
++    CHECK_FALSE(PresetAssistantBridge::has_explicit_panel_approval(json::object()));
++    CHECK_FALSE(PresetAssistantBridge::has_explicit_panel_approval(
++        {{"approvedAt", ""}}));
++
++    PresetAssistantBridge bridge("test-token");
++    const std::string trusted = "http://localhost:5173/index.html";
++    json value = request("test-token", "proposal.apply");
++    value["expectedRevision"] = 1;
++    value["params"] = {
++        {"destination", "current-project"},
++        {"presetType", "process"},
++        {"expectedPresetName", "0.20mm Standard"},
++        {"changes", {{"layer_height", "0.20"}}},
++        {"reason", "test"},
++    };
++
++    const json response = bridge.handle_message(
++        value.dump(), trusted, trusted);
++    CHECK_FALSE(response["ok"].get<bool>());
++    CHECK(response["error"]["code"] == "CONSENT_REQUIRED");
++}
++
++TEST_CASE("Preset Assistant rollback keeps a newly saved permanent preset",
++          "[PresetAssistant][Bridge]")
++{
++    CHECK(PresetAssistantBridge::preserves_created_preset_on_rollback(
++        "save-as-new-preset"));
++    CHECK_FALSE(PresetAssistantBridge::preserves_created_preset_on_rollback(
++        "current-project"));
++    CHECK_FALSE(PresetAssistantBridge::preserves_created_preset_on_rollback(
++        "update-current-preset"));
++}

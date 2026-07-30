@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Orca Preset Assistant'
+  short_description: 'Inspect Orca presets, current-project geometry, and print evidence'
+  default_prompt: 'Use $orca-preset-assistant to review my current Orca settings without reading model geometry.'

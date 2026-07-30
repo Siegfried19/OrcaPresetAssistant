@@ -1,0 +1,394 @@
+diff --git a/src/slic3r/GUI/PresetAssistantPanel.hpp b/src/slic3r/GUI/PresetAssistantPanel.hpp
+--- a/src/slic3r/GUI/PresetAssistantPanel.hpp
++++ b/src/slic3r/GUI/PresetAssistantPanel.hpp
+@@ -3,11 +3,14 @@
+ 
+ #include <wx/panel.h>
+ #include <wx/string.h>
++#include <wx/timer.h>
+ #include <wx/webview.h>
+ 
+ #include <memory>
+ #include <string>
+ 
+ class wxCommandEvent;
++class wxProcess;
++class wxTimerEvent;
+ 
+ namespace Slic3r { namespace GUI {
+@@ -22,6 +25,9 @@
+ class PresetAssistantPanel final : public wxPanel
+ {
+ public:
+     explicit PresetAssistantPanel(wxWindow* parent);
+     ~PresetAssistantPanel() override;
++    static wxString append_language_query(
++        wxString url,
++        const wxString& language);
+ 
+@@ -42,6 +49,11 @@ private:
+     void     on_navigating(wxWebViewEvent& event);
+     void     on_script_message(wxWebViewEvent& event);
+     void     on_webview_recreated(wxCommandEvent& event);
++    void     start_helper();
++    void     stop_helper();
++    void     on_helper_ready_timer(wxTimerEvent& event);
++    wxString resolve_helper_executable() const;
++    bool     has_development_url() const;
+ 
+     wxWebView* m_browser{nullptr};
+     wxString   m_page_url;
+@@ -52,6 +60,14 @@ private:
+ 
+     std::string                            m_bridge_token;
+     std::unique_ptr<PresetAssistantBridge> m_bridge;
++
++    std::unique_ptr<wxProcess> m_helper_process;
++    wxTimer                    m_helper_ready_timer;
++    long                       m_helper_pid{0};
++    int                        m_helper_ready_attempts{0};
++    wxString                   m_helper_state_path;
++    wxString                   m_helper_page_url;
++    std::string                m_helper_session_token;
+ };
+ 
+ }} // namespace Slic3r::GUI
+diff --git a/src/slic3r/GUI/PresetAssistantPanel.cpp b/src/slic3r/GUI/PresetAssistantPanel.cpp
+--- a/src/slic3r/GUI/PresetAssistantPanel.cpp
++++ b/src/slic3r/GUI/PresetAssistantPanel.cpp
+@@ -18,17 +18,22 @@
+ 
+ #include <array>
+ #include <iterator>
++#include <sstream>
+ #include <string>
++#include <vector>
+ 
++#include <wx/process.h>
+ #include <wx/sizer.h>
++#include <wx/utils.h>
+ 
+ namespace Slic3r { namespace GUI {
+ 
+ namespace {
+ 
+ constexpr const char* CONFIG_SECTION = "orca_preset_assistant";
+ constexpr const char* CONFIG_URL_KEY = "url";
+ constexpr const char* STATIC_ENTRY   = "web/orca_preset_assistant/index.html";
++constexpr const char* HELPER_ENTRY   = "helper/Orca Preset Assistant.exe";
+ 
+ bool has_url_host_boundary(const std::string& url, const std::string& prefix)
+ {
+@@ -57,10 +62,5 @@ wxString with_runtime_query(wxString url)
+     const wxString language = wxGetApp().current_language_code_safe();
+-    if (language.empty())
+-        return url;
+-
+-    url += url.Contains("?") ? "&lang=" : "?lang=";
+-    url += language;
+-    return url;
++    return PresetAssistantPanel::append_language_query(url, language);
+ }
+ 
+ const char* load_error_html()
+@@ -123,7 +132,26 @@ std::string native_bootstrap_script(const std::string& token)
+ } // namespace
++
++wxString PresetAssistantPanel::append_language_query(
++    wxString url,
++    const wxString& language)
++{
++    if (language.empty())
++        return url;
++
++    wxString fragment;
++    const int fragment_pos = url.Find('#');
++    if (fragment_pos != wxNOT_FOUND) {
++        fragment = url.Mid(fragment_pos);
++        url = url.Left(fragment_pos);
++    }
++    url += url.Contains("?") ? "&lang=" : "?lang=";
++    url += language;
++    return url + fragment;
++}
+ 
+ PresetAssistantPanel::PresetAssistantPanel(wxWindow* parent)
+-    : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL)
++    : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL),
++      m_helper_ready_timer(this)
+ {
+     SetBackgroundColour(wxGetApp().get_window_default_clr());
+ 
+@@ -149,11 +163,19 @@ PresetAssistantPanel::PresetAssistantPanel(wxWindow* parent)
+     m_browser->Bind(wxEVT_WEBVIEW_NAVIGATING, &PresetAssistantPanel::on_navigating, this);
+     m_browser->Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &PresetAssistantPanel::on_script_message, this);
+     m_browser->Bind(EVT_WEBVIEW_RECREATED, &PresetAssistantPanel::on_webview_recreated, this);
++    m_helper_ready_timer.Bind(
++        wxEVT_TIMER,
++        &PresetAssistantPanel::on_helper_ready_timer,
++        this);
+ 
++    start_helper();
+     reload();
+ }
+ 
+-PresetAssistantPanel::~PresetAssistantPanel() = default;
++PresetAssistantPanel::~PresetAssistantPanel()
++{
++    stop_helper();
++}
+ 
+ void PresetAssistantPanel::activate()
+ {
+@@ -181,6 +200,11 @@ wxString PresetAssistantPanel::resolve_page_url()
+ {
+     m_using_localhost = false;
+ 
++    if (!m_helper_page_url.empty() && !has_development_url()) {
++        m_using_localhost = true;
++        return with_runtime_query(m_helper_page_url);
++    }
++
+     if (wxGetApp().app_config) {
+         std::string configured = boost::algorithm::trim_copy(
+             wxGetApp().app_config->get(CONFIG_SECTION, CONFIG_URL_KEY));
+@@ -203,6 +233,207 @@ wxString PresetAssistantPanel::resolve_page_url()
+     return with_runtime_query(wxString("file://") + from_u8(entry.string()));
+ }
+ 
++bool PresetAssistantPanel::has_development_url() const
++{
++    if (!wxGetApp().app_config)
++        return false;
++    const std::string configured = boost::algorithm::trim_copy(
++        wxGetApp().app_config->get(CONFIG_SECTION, CONFIG_URL_KEY));
++    return !configured.empty() && is_loopback_http_url(configured);
++}
++
++wxString PresetAssistantPanel::resolve_helper_executable() const
++{
++    namespace fs = boost::filesystem;
++    const fs::path bundled =
++        (fs::path(resources_dir()) / HELPER_ENTRY).make_preferred();
++    if (fs::exists(bundled) && fs::is_regular_file(bundled))
++        return from_path(bundled);
++    return {};
++}
++
++void PresetAssistantPanel::start_helper()
++{
++    if (has_development_url() || m_helper_pid > 0)
++        return;
++
++#ifndef _WIN32
++    BOOST_LOG_TRIVIAL(warning)
++        << "PresetAssistantPanel: packaged helper launch is currently Windows-only";
++    return;
++#else
++    namespace fs = boost::filesystem;
++    const wxString executable = resolve_helper_executable();
++    if (executable.empty()) {
++        BOOST_LOG_TRIVIAL(warning)
++            << "PresetAssistantPanel: packaged headless helper is not installed";
++        return;
++    }
++
++    m_helper_session_token =
++        boost::uuids::to_string(boost::uuids::random_generator()());
++    const fs::path state_path =
++        (fs::temp_directory_path() /
++         ("orca-preset-assistant-" +
++          boost::uuids::to_string(boost::uuids::random_generator()()) +
++          ".json"))
++            .make_preferred();
++    if (fs::exists(state_path)) {
++        BOOST_LOG_TRIVIAL(error)
++            << "PresetAssistantPanel: helper state path unexpectedly exists";
++        return;
++    }
++    m_helper_state_path = from_path(state_path);
++
++    std::vector<wxString> argument_storage{
++        executable,
++        "--serve",
++        "--host",
++        "127.0.0.1",
++        "--port",
++        "0",
++        "--session-token",
++        from_u8(m_helper_session_token),
++        "--state-file",
++        m_helper_state_path,
++        "--parent-pid",
++        wxString::Format("%lu", static_cast<unsigned long>(wxGetProcessId())),
++    };
++    std::vector<const wchar_t*> arguments;
++    arguments.reserve(argument_storage.size() + 1);
++    for (const wxString& argument : argument_storage)
++        arguments.push_back(argument.wc_str());
++    arguments.push_back(nullptr);
++
++    auto process = std::make_unique<wxProcess>();
++    const long pid = wxExecute(
++        arguments.data(),
++        wxEXEC_ASYNC | wxEXEC_HIDE_CONSOLE,
++        process.get());
++    if (pid <= 0) {
++        BOOST_LOG_TRIVIAL(error)
++            << "PresetAssistantPanel: failed to launch packaged headless helper";
++        m_helper_state_path.clear();
++        m_helper_session_token.clear();
++        return;
++    }
++
++    m_helper_pid = pid;
++    m_helper_process = std::move(process);
++    m_helper_ready_attempts = 0;
++    m_helper_ready_timer.Start(100);
++#endif
++}
++
++void PresetAssistantPanel::stop_helper()
++{
++    m_helper_ready_timer.Stop();
++#ifdef _WIN32
++    if (m_helper_pid > 0 && wxProcess::Exists(m_helper_pid)) {
++        wxKillError kill_error = wxKILL_OK;
++        wxProcess::Kill(
++            m_helper_pid,
++            wxSIGTERM,
++            &kill_error,
++            wxKILL_CHILDREN);
++        if (kill_error != wxKILL_OK)
++            BOOST_LOG_TRIVIAL(warning)
++                << "PresetAssistantPanel: helper did not acknowledge shutdown";
++    }
++#endif
++    m_helper_process.reset();
++    m_helper_pid = 0;
++
++    if (!m_helper_state_path.empty()) {
++        boost::system::error_code error;
++        boost::filesystem::remove(
++            into_path(m_helper_state_path),
++            error);
++        if (error)
++            BOOST_LOG_TRIVIAL(warning)
++                << "PresetAssistantPanel: could not remove helper state file";
++    }
++    m_helper_state_path.clear();
++    m_helper_session_token.clear();
++}
++
++void PresetAssistantPanel::on_helper_ready_timer(wxTimerEvent& event)
++{
++    event.Skip();
++    if (m_helper_pid <= 0 || m_helper_state_path.empty()) {
++        m_helper_ready_timer.Stop();
++        return;
++    }
++    if (++m_helper_ready_attempts > 150) {
++        BOOST_LOG_TRIVIAL(error)
++            << "PresetAssistantPanel: helper readiness timed out";
++        stop_helper();
++        return;
++    }
++    if (!boost::filesystem::exists(into_path(m_helper_state_path)))
++        return;
++
++    boost::nowide::ifstream stream(
++        into_path(m_helper_state_path).string(),
++        std::ios::binary);
++    if (!stream)
++        return;
++    std::ostringstream buffer;
++    buffer << stream.rdbuf();
++    const nlohmann::json state =
++        nlohmann::json::parse(buffer.str(), nullptr, false);
++    if (state.is_discarded() || !state.is_object())
++        return;
++
++    auto schema = state.find("schemaVersion");
++    auto pid = state.find("pid");
++    auto generated_at = state.find("generatedAt");
++    auto origin = state.find("origin");
++    auto port = state.find("port");
++    if (state.size() != 5 ||
++        schema == state.end() || !schema->is_number_unsigned() ||
++        schema->get<unsigned int>() != 1 ||
++        pid == state.end() || !pid->is_number_integer() ||
++        pid->get<long>() != m_helper_pid ||
++        generated_at == state.end() || !generated_at->is_string() ||
++        generated_at->get<std::string>().empty() ||
++        origin == state.end() || !origin->is_string() ||
++        port == state.end() || !port->is_number_unsigned() ||
++        port->get<unsigned int>() == 0 ||
++        port->get<unsigned int>() > 65535) {
++        BOOST_LOG_TRIVIAL(error)
++            << "PresetAssistantPanel: helper readiness file is invalid";
++        stop_helper();
++        return;
++    }
++
++    const std::string origin_value = origin->get<std::string>();
++    const std::string expected_origin =
++        "http://127.0.0.1:" +
++        std::to_string(port->get<unsigned int>());
++    if (origin_value != expected_origin ||
++        !is_loopback_http_url(origin_value) ||
++        m_helper_session_token.size() < 32) {
++        BOOST_LOG_TRIVIAL(error)
++            << "PresetAssistantPanel: helper returned an untrusted page";
++        stop_helper();
++        return;
++    }
++    const std::string page_value =
++        origin_value + "/#session=" + m_helper_session_token;
++
++    m_helper_ready_timer.Stop();
++    boost::system::error_code remove_error;
++    boost::filesystem::remove(
++        into_path(m_helper_state_path),
++        remove_error);
++    m_helper_state_path.clear();
++    m_helper_session_token.clear();
++    m_helper_page_url = from_u8(page_value);
++    m_page_url = resolve_page_url();
++    load_page();
++}
++
+ void PresetAssistantPanel::load_page()
+ {
+     if (!m_browser || m_page_url.empty())
+diff --git a/tests/slic3rutils/test_preset_assistant_bridge.cpp b/tests/slic3rutils/test_preset_assistant_bridge.cpp
+--- a/tests/slic3rutils/test_preset_assistant_bridge.cpp
++++ b/tests/slic3rutils/test_preset_assistant_bridge.cpp
+@@ -3,6 +3,7 @@
+ #include <nlohmann/json.hpp>
+ 
+ #include "slic3r/GUI/PresetAssistantBridge.hpp"
++#include "slic3r/GUI/PresetAssistantPanel.hpp"
+ 
+ using Slic3r::GUI::PresetAssistantBridge;
+ using json = nlohmann::json;
+@@ -39,6 +40,20 @@ TEST_CASE("Preset Assistant bridge accepts only its trusted page origin",
+         "file:///opt/orca/resources/web/orca_preset_assistant/index.html"));
+ }
+ 
++TEST_CASE("Preset Assistant helper language query preserves the session fragment",
++          "[PresetAssistant][Helper]")
++{
++    using Slic3r::GUI::PresetAssistantPanel;
++    CHECK(PresetAssistantPanel::append_language_query(
++        "http://127.0.0.1:47123/#session=secret&view=presets",
++        "zh_CN") ==
++        "http://127.0.0.1:47123/?lang=zh_CN#session=secret&view=presets");
++    CHECK(PresetAssistantPanel::append_language_query(
++        "http://127.0.0.1:47123/?view=presets",
++        "en_US") ==
++        "http://127.0.0.1:47123/?view=presets&lang=en_US");
++}
++
+ TEST_CASE("Preset Assistant bridge rejects malformed messages before runtime access",
+           "[PresetAssistant][Bridge]")
+ {

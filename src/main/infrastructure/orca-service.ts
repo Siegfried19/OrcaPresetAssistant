@@ -1,29 +1,28 @@
-import { access } from 'node:fs/promises'
-import { constants } from 'node:fs'
-import { join } from 'node:path'
 import { spawn } from 'node:child_process'
+import { constants } from 'node:fs'
+import { access } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 
 function candidates(): string[] {
   const paths = new Set<string>()
+  const configured = process.env.ORCA_SLICER_EXE
   const programFiles = process.env.ProgramFiles
   const localAppData = process.env.LOCALAPPDATA
 
+  if (configured) paths.add(resolve(configured))
   if (programFiles) {
-    paths.add(join(programFiles, 'Bambu Studio', 'bambu-studio.exe'))
+    paths.add(join(programFiles, 'OrcaSlicer', 'orca-slicer.exe'))
+    paths.add(join(programFiles, 'Orca Slicer', 'orca-slicer.exe'))
   }
   if (localAppData) {
-    paths.add(join(localAppData, 'Programs', 'Bambu Studio', 'bambu-studio.exe'))
-  }
-
-  for (let code = 'C'.charCodeAt(0); code <= 'Z'.charCodeAt(0); code += 1) {
-    paths.add(`${String.fromCharCode(code)}:\\Bambu studio\\bambu-studio.exe`)
-    paths.add(`${String.fromCharCode(code)}:\\Bambu Studio\\bambu-studio.exe`)
+    paths.add(join(localAppData, 'Programs', 'OrcaSlicer', 'orca-slicer.exe'))
+    paths.add(join(localAppData, 'Programs', 'Orca Slicer', 'orca-slicer.exe'))
   }
 
   return [...paths]
 }
 
-export async function findBambuExecutable(): Promise<string | null> {
+export async function findOrcaExecutable(): Promise<string | null> {
   for (const path of candidates()) {
     try {
       await access(path, constants.X_OK)

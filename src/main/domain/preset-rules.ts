@@ -29,7 +29,6 @@ export function validatePresetIdentity(
   kind: PresetKind,
   filenameStem: string,
   data: JsonRecord,
-  hasInfoFile: boolean,
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = []
   const name = firstString(data.name)
@@ -47,10 +46,6 @@ export function validatePresetIdentity(
     issues.push('settings-id-filename-mismatch')
   }
 
-  if (!hasInfoFile) {
-    issues.push('missing-info')
-  }
-
   return issues
 }
 
@@ -58,6 +53,6 @@ export function createPresetId(kind: PresetKind, relativePath: string): string {
   return `${kind}:${relativePath.replaceAll('\\', '/')}`
 }
 
-export function isPrintResult(value: unknown): value is 'success' | 'issue' | 'failed' {
-  return value === 'success' || value === 'issue' || value === 'failed'
+export function isPrintResult(value: unknown): value is 'pending' | 'success' | 'issue' | 'failed' {
+  return value === 'pending' || value === 'success' || value === 'issue' || value === 'failed'
 }

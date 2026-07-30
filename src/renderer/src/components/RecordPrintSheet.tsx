@@ -1,4 +1,4 @@
-import { Check, ChevronDown, FlaskConical, Layers3, X } from 'lucide-react'
+import { Check, ChevronDown, FileArchive, FlaskConical, Layers3, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 import { MATERIAL_ROLES } from '@shared/contracts'
@@ -8,6 +8,7 @@ import type {
   PresetView,
   PrintResult,
   RecordPrintRequest,
+  ThreeMfPolicy,
 } from '@shared/contracts'
 
 import { useI18n } from '../i18n/I18nProvider'
@@ -15,14 +16,18 @@ import { useI18n } from '../i18n/I18nProvider'
 interface RecordPrintSheetProps {
   readonly presets: readonly PresetView[]
   readonly selectedPreset: PresetView | null
+  readonly threeMfPolicy: ThreeMfPolicy
   readonly onClose: () => void
+  readonly onChooseProject3mf: () => Promise<string | null>
   readonly onSave: (request: RecordPrintRequest) => Promise<void>
 }
 
 export function RecordPrintSheet({
   presets,
   selectedPreset,
+  threeMfPolicy,
   onClose,
+  onChooseProject3mf,
   onSave,
 }: RecordPrintSheetProps): React.JSX.Element {
   const { t } = useI18n()
@@ -40,8 +45,10 @@ export function RecordPrintSheet({
   const [materials, setMaterials] = useState<MaterialAssignment[]>(
     selectedPreset?.kind === 'filament' ? [{ presetId: selectedPreset.id, role: 'model' }] : [],
   )
-  const [result, setResult] = useState<PrintResult>('success')
+  const [result, setResult] = useState<PrintResult>('pending')
   const [note, setNote] = useState('')
+  const [project3mfPath, setProject3mfPath] = useState<string | null>(null)
+  const [choosingProject, setChoosingProject] = useState(false)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
 
@@ -80,11 +87,21 @@ export function RecordPrintSheet({
       setFormError(t('record.filamentRequired'))
       return
     }
+    if (threeMfPolicy === 'always' && !project3mfPath) {
+      setFormError(t('record.projectRequired'))
+      return
+    }
 
     setSaving(true)
     setFormError(null)
     try {
-      await onSave({ processId, materials, result, note })
+      await onSave({
+        processId,
+        materials,
+        result,
+        note,
+        ...(threeMfPolicy !== 'never' && project3mfPath ? { project3mfPath } : {}),
+      })
       onClose()
     } catch {
       setFormError(t('record.saveFailed'))
@@ -217,7 +234,7 @@ export function RecordPrintSheet({
           <fieldset className="form-group">
             <legend>{t('record.result')}</legend>
             <div className="result-segmented">
-              {(['success', 'issue', 'failed'] as const).map((value) => (
+              {(['pending', 'success', 'issue', 'failed'] as const).map((value) => (
                 <button
                   aria-pressed={result === value}
                   className={`result-choice result-choice-${value} ${
@@ -232,6 +249,71 @@ export function RecordPrintSheet({
                 </button>
               ))}
             </div>
+          </fieldset>
+
+          <fieldset className="form-group">
+            <legend>
+              <FileArchive aria-hidden="true" size={16} />
+              {t('record.project3mf')}
+              <span>
+                {threeMfPolicy === 'always'
+                  ? t('record.required')
+                  : threeMfPolicy === 'never'
+                    ? t('record.disabled')
+                    : t('record.optional')}
+              </span>
+            </legend>
+            {threeMfPolicy === 'never' ? (
+              <div className="project-policy-notice">{t('record.projectNever')}</div>
+            ) : (
+              <>
+                {threeMfPolicy === 'always' && (
+                  <div className="project-policy-notice is-required">
+                    {t('record.projectAlways')}
+                  </div>
+                )}
+                <div className="project-picker">
+                  <div>
+                    <strong>
+                      {project3mfPath
+                        ? project3mfPath.split(/[\\/]/u).filter(Boolean).at(-1)
+                        : t('record.noProjectSelected')}
+                    </strong>
+                    <small>
+                      {project3mfPath ? t('record.projectSelected') : t('record.projectPrivacy')}
+                    </small>
+                  </div>
+                  <div>
+                    {project3mfPath && (
+                      <button
+                        className="secondary-button compact"
+                        disabled={saving || choosingProject}
+                        onClick={() => setProject3mfPath(null)}
+                        type="button"
+                      >
+                        {t('action.remove')}
+                      </button>
+                    )}
+                    <button
+                      className="secondary-button compact"
+                      disabled={saving || choosingProject}
+                      onClick={() => {
+                        setChoosingProject(true)
+                        void onChooseProject3mf()
+                          .then((path) => {
+                            if (path) setProject3mfPath(path)
+                          })
+                          .catch(() => undefined)
+                          .finally(() => setChoosingProject(false))
+                      }}
+                      type="button"
+                    >
+                      {choosingProject ? t('record.choosingProject') : t('record.chooseProject')}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
           </fieldset>
 
           <div className="form-group">

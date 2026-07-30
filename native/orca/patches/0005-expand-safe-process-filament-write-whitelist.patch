@@ -1,0 +1,759 @@
+diff --git a/resources/web/orca_preset_assistant/index.html b/resources/web/orca_preset_assistant/index.html
+index 07ffd82..0063ea7 100644
+--- a/resources/web/orca_preset_assistant/index.html
++++ b/resources/web/orca_preset_assistant/index.html
+@@ -105,9 +105,11 @@
+         <button id="read-state" type="button">Read native state</button>
+         <button id="choose-workspace" type="button">Choose workspace</button>
+       </div>
+-      <p class="note">
+-        Model geometry and part placement are never returned by this page.
+-      </p>
++      <p class="note">
++        Model geometry and part placement are never returned by this page.
++        Process and filament use a controlled write whitelist; machine presets
++        are read-only.
++      </p>
+       <pre id="output">No native request sent.</pre>
+     </main>
+     <script>
+diff --git a/src/slic3r/GUI/PresetAssistantBridge.cpp b/src/slic3r/GUI/PresetAssistantBridge.cpp
+index 8bd056d..28b336e 100644
+--- a/src/slic3r/GUI/PresetAssistantBridge.cpp
++++ b/src/slic3r/GUI/PresetAssistantBridge.cpp
+@@ -224,14 +224,31 @@ Plater& require_plater()
+     return *plater;
+ }
+ 
+-Tab& require_process_tab()
+-{
+-    GUI_App& app = require_app();
+-    Tab* tab = app.get_tab(Preset::TYPE_PRINT);
+-    if (tab == nullptr || tab->get_config() == nullptr || tab->get_presets() == nullptr)
+-        throw BridgeError("SETTINGS_NOT_READY", "Current process settings are not available");
+-    return *tab;
+-}
++Preset::Type writable_preset_type(const std::string& preset_type)
++{
++    if (preset_type == "process")
++        return Preset::TYPE_PRINT;
++    if (preset_type == "filament")
++        return Preset::TYPE_FILAMENT;
++    if (preset_type == "machine")
++        throw BridgeError(
++            "PRESET_TYPE_READ_ONLY",
++            "Machine presets are read-only in Preset Assistant");
++    throw BridgeError(
++        "UNSUPPORTED_PRESET_TYPE",
++        "Only process and filament presets support controlled writes");
++}
++
++Tab& require_preset_tab(const std::string& preset_type)
++{
++    GUI_App& app = require_app();
++    Tab* tab = app.get_tab(writable_preset_type(preset_type));
++    if (tab == nullptr || tab->get_config() == nullptr || tab->get_presets() == nullptr)
++        throw BridgeError(
++            "SETTINGS_NOT_READY",
++            "Current " + preset_type + " settings are not available");
++    return *tab;
++}
+ 
+ json preset_identity(const Preset& selected, const Preset& edited)
+ {
+@@ -289,44 +306,215 @@ json serialized_settings(const DynamicPrintConfig& config)
+     return result;
+ }
+ 
+-std::string json_value_as_serialized(const json& value, const std::string& key)
+-{
+-    if (value.is_string())
+-        return value.get<std::string>();
+-    if (value.is_number() || value.is_boolean())
+-        return value.dump();
+-    throw BridgeError("INVALID_SETTING_VALUE",
+-                      "Setting " + key + " must be a string, number, or boolean");
+-}
+-
+-double validated_layer_height(const std::string& serialized,
+-                              const PresetBundle& bundle)
+-{
+-    size_t consumed = 0;
+-    double value = 0.;
+-    try {
+-        value = std::stod(serialized, &consumed);
+-    } catch (const std::exception&) {
+-        throw BridgeError("INVALID_SETTING_VALUE",
+-                          "layer_height must be a number in millimeters");
+-    }
+-    if (consumed != serialized.size() || !std::isfinite(value))
+-        throw BridgeError("INVALID_SETTING_VALUE",
+-                          "layer_height must be a finite number in millimeters");
+-
+-    const DynamicPrintConfig full_config = bundle.full_config();
+-    const auto* nozzles = full_config.option<ConfigOptionFloats>("nozzle_diameter");
+-    if (nozzles == nullptr || nozzles->values.empty())
+-        throw BridgeError("SETTINGS_NOT_READY",
+-                          "Current nozzle diameter is not available");
+-    const double max_height =
+-        *std::min_element(nozzles->values.begin(), nozzles->values.end()) * 0.8;
+-    if (value < 0.04 || value > max_height)
+-        throw BridgeError(
+-            "SETTING_OUT_OF_RANGE",
+-            "layer_height must be between 0.04 mm and 80% of the smallest active nozzle diameter");
+-    return value;
+-}
++std::string json_value_as_serialized(const json& value, const std::string& key)
++{
++    if (value.is_string())
++        return value.get<std::string>();
++    if (value.is_number())
++        return value.dump();
++    if (value.is_boolean())
++        return value.get<bool>() ? "1" : "0";
++    throw BridgeError("INVALID_SETTING_VALUE",
++                      "Setting " + key + " must be a string, number, or boolean");
++}
++
++enum class ScalarKind
++{
++    Boolean,
++    Integer,
++    Number,
++    Percent,
++};
++
++struct WriteRule
++{
++    const char*      key;
++    ConfigOptionType option_type;
++    ScalarKind       scalar_kind;
++    double           minimum;
++    double           maximum;
++    const char*      unit;
++    bool             dynamic_layer_max{false};
++};
++
++const std::array<WriteRule, 18>& process_write_rules()
++{
++    static const std::array<WriteRule, 18> rules{{
++        {"layer_height",             coFloat,   ScalarKind::Number,  0.04, 0.0,   "mm",      true},
++        {"wall_loops",               coInt,     ScalarKind::Integer, 0.0,  20.0,  "count"},
++        {"top_shell_layers",         coInt,     ScalarKind::Integer, 0.0,  20.0,  "count"},
++        {"bottom_shell_layers",      coInt,     ScalarKind::Integer, 0.0,  20.0,  "count"},
++        {"sparse_infill_density",    coPercent, ScalarKind::Percent, 0.0,  100.0, "percent"},
++        {"enable_support",           coBool,    ScalarKind::Boolean, 0.0,  1.0,   "boolean"},
++        {"support_threshold_angle",  coInt,     ScalarKind::Integer, 0.0,  90.0,  "degree"},
++        {"support_speed",            coFloats,  ScalarKind::Number,  1.0,  1000.0,"mm/s"},
++        {"brim_width",               coFloat,   ScalarKind::Number,  0.0,  50.0,  "mm"},
++        {"skirt_loops",              coInt,     ScalarKind::Integer, 0.0,  10.0,  "count"},
++        {"outer_wall_speed",         coFloats,  ScalarKind::Number,  1.0,  1000.0,"mm/s"},
++        {"inner_wall_speed",         coFloats,  ScalarKind::Number,  1.0,  1000.0,"mm/s"},
++        {"sparse_infill_speed",      coFloats,  ScalarKind::Number,  1.0,  1000.0,"mm/s"},
++        {"travel_speed",             coFloats,  ScalarKind::Number,  1.0,  2000.0,"mm/s"},
++        {"default_acceleration",     coFloats,  ScalarKind::Number,  0.0,  50000.0,"mm/s2"},
++        {"travel_acceleration",      coFloats,  ScalarKind::Number,  0.0,  50000.0,"mm/s2"},
++        {"outer_wall_acceleration",  coFloats,  ScalarKind::Number,  0.0,  50000.0,"mm/s2"},
++        {"inner_wall_acceleration",  coFloats,  ScalarKind::Number,  0.0,  50000.0,"mm/s2"},
++    }};
++    return rules;
++}
++
++const std::array<WriteRule, 16>& filament_write_rules()
++{
++    static const std::array<WriteRule, 16> rules{{
++        {"filament_flow_ratio",                 coFloats, ScalarKind::Number,  0.5,  1.5,  "ratio"},
++        {"filament_max_volumetric_speed",       coFloats, ScalarKind::Number,  0.1,  100.0,"mm3/s"},
++        {"nozzle_temperature",                  coInts,   ScalarKind::Integer, 100.0,400.0,"celsius"},
++        {"nozzle_temperature_initial_layer",    coInts,   ScalarKind::Integer, 100.0,400.0,"celsius"},
++        {"cool_plate_temp",                     coInts,   ScalarKind::Integer, 0.0,  150.0,"celsius"},
++        {"cool_plate_temp_initial_layer",       coInts,   ScalarKind::Integer, 0.0,  150.0,"celsius"},
++        {"eng_plate_temp",                      coInts,   ScalarKind::Integer, 0.0,  150.0,"celsius"},
++        {"eng_plate_temp_initial_layer",        coInts,   ScalarKind::Integer, 0.0,  150.0,"celsius"},
++        {"hot_plate_temp",                      coInts,   ScalarKind::Integer, 0.0,  150.0,"celsius"},
++        {"hot_plate_temp_initial_layer",        coInts,   ScalarKind::Integer, 0.0,  150.0,"celsius"},
++        {"textured_plate_temp",                 coInts,   ScalarKind::Integer, 0.0,  150.0,"celsius"},
++        {"textured_plate_temp_initial_layer",   coInts,   ScalarKind::Integer, 0.0,  150.0,"celsius"},
++        {"fan_min_speed",                       coFloats, ScalarKind::Number,  0.0,  100.0,"percent"},
++        {"fan_max_speed",                       coFloats, ScalarKind::Number,  0.0,  100.0,"percent"},
++        {"overhang_fan_speed",                  coInts,   ScalarKind::Integer, 0.0,  100.0,"percent"},
++        {"additional_cooling_fan_speed",        coInts,   ScalarKind::Integer, 0.0,  100.0,"percent"},
++    }};
++    return rules;
++}
++
++const WriteRule* find_write_rule(const std::string& preset_type,
++                                 const std::string& key)
++{
++    if (preset_type == "process") {
++        for (const WriteRule& rule : process_write_rules())
++            if (key == rule.key)
++                return &rule;
++    } else if (preset_type == "filament") {
++        for (const WriteRule& rule : filament_write_rules())
++            if (key == rule.key)
++                return &rule;
++    }
++    return nullptr;
++}
++
++const char* scalar_kind_name(ScalarKind kind)
++{
++    switch (kind) {
++    case ScalarKind::Boolean: return "boolean";
++    case ScalarKind::Integer: return "integer";
++    case ScalarKind::Number:  return "number";
++    case ScalarKind::Percent: return "percent";
++    }
++    return "unknown";
++}
++
++json serialized_write_rule(const WriteRule& rule)
++{
++    json result{
++        {"key", rule.key},
++        {"valueShape", "scalar"},
++        {"kind", scalar_kind_name(rule.scalar_kind)},
++        {"minimum", rule.minimum},
++        {"unit", rule.unit},
++    };
++    if (rule.dynamic_layer_max) {
++        result["maximum"] = nullptr;
++        result["dynamicMaximum"] = "80-percent-of-smallest-active-nozzle";
++    } else {
++        result["maximum"] = rule.maximum;
++    }
++    return result;
++}
++
++double parse_scalar_value(std::string serialized,
++                          const WriteRule& rule,
++                          const std::string& key)
++{
++    boost::algorithm::trim(serialized);
++    if (serialized.empty() ||
++        serialized.find(',') != std::string::npos ||
++        serialized.find(';') != std::string::npos)
++        throw BridgeError(
++            "INVALID_SETTING_VALUE",
++            "Setting " + key + " must contain exactly one scalar value");
++
++    if (rule.scalar_kind == ScalarKind::Percent &&
++        !serialized.empty() && serialized.back() == '%') {
++        serialized.pop_back();
++        boost::algorithm::trim(serialized);
++    }
++
++    size_t consumed = 0;
++    double value = 0.;
++    try {
++        value = std::stod(serialized, &consumed);
++    } catch (const std::exception&) {
++        throw BridgeError(
++            "INVALID_SETTING_VALUE",
++            "Setting " + key + " must be a finite " +
++                scalar_kind_name(rule.scalar_kind));
++    }
++    if (consumed != serialized.size() || !std::isfinite(value))
++        throw BridgeError(
++            "INVALID_SETTING_VALUE",
++            "Setting " + key + " must be a finite " +
++                scalar_kind_name(rule.scalar_kind));
++    if (rule.scalar_kind == ScalarKind::Integer && std::floor(value) != value)
++        throw BridgeError(
++            "INVALID_SETTING_VALUE",
++            "Setting " + key + " must be an integer");
++    return value;
++}
++
++double maximum_for_rule(const WriteRule& rule,
++                        const PresetBundle& bundle)
++{
++    if (!rule.dynamic_layer_max)
++        return rule.maximum;
++
++    const DynamicPrintConfig full_config = bundle.full_config();
++    const auto* nozzles =
++        full_config.option<ConfigOptionFloats>("nozzle_diameter");
++    if (nozzles == nullptr || nozzles->values.empty())
++        throw BridgeError(
++            "SETTINGS_NOT_READY",
++            "Current nozzle diameter is not available");
++    return *std::min_element(
++               nozzles->values.begin(), nozzles->values.end()) *
++           0.8;
++}
++
++void validate_rule_value(const json& request_value,
++                         const ConfigOption& replacement,
++                         const WriteRule& rule,
++                         const PresetBundle& bundle)
++{
++    if (rule.scalar_kind == ScalarKind::Boolean) {
++        if (!request_value.is_boolean())
++            throw BridgeError(
++                "INVALID_SETTING_VALUE",
++                "Setting " + std::string(rule.key) + " must be a JSON boolean");
++        return;
++    }
++    if (request_value.is_boolean() ||
++        (!request_value.is_number() && !request_value.is_string()))
++        throw BridgeError(
++            "INVALID_SETTING_VALUE",
++            "Setting " + std::string(rule.key) + " must be a number or numeric string");
++
++    const double value =
++        parse_scalar_value(replacement.serialize(), rule, rule.key);
++    const double maximum = maximum_for_rule(rule, bundle);
++    if (value < rule.minimum || value > maximum) {
++        std::ostringstream message;
++        message << "Setting " << rule.key << " must be between "
++                << rule.minimum << " and " << maximum << " " << rule.unit;
++        throw BridgeError("SETTING_OUT_OF_RANGE", message.str());
++    }
++}
+ 
+ struct ValidatedChangeSet
+ {
+@@ -336,42 +524,69 @@ struct ValidatedChangeSet
+     json               after  = json::object();
+ };
+ 
+-ValidatedChangeSet validate_process_changes(const json& changes,
+-                                            const DynamicPrintConfig& current,
+-                                            const PresetBundle& bundle)
+-{
+-    if (!changes.is_object() || changes.empty())
+-        throw BridgeError("INVALID_REQUEST", "changes must be a non-empty object");
+-
+-    ValidatedChangeSet result{DynamicPrintConfig(current)};
+-    for (auto it = changes.begin(); it != changes.end(); ++it) {
+-        const std::string key = it.key();
+-        if (key != "layer_height")
+-            throw BridgeError("UNSUPPORTED_SETTING",
+-                              "Unsupported process setting: " + key);
+-
+-        const std::string serialized = json_value_as_serialized(it.value(), key);
+-        (void) validated_layer_height(serialized, bundle);
+-
+-        const ConfigOption* existing = result.updated.option(key);
+-        if (existing == nullptr)
+-            throw BridgeError("SETTING_NOT_AVAILABLE",
+-                              "Current process setting is not available: " + key);
+-
+-        std::unique_ptr<ConfigOption> replacement(existing->clone());
+-        if (!replacement->deserialize(serialized))
+-            throw BridgeError("INVALID_SETTING_VALUE",
+-                              "Invalid serialized value for " + key);
+-
+-        const std::string before = existing->serialize();
+-        const std::string after  = replacement->serialize();
++ValidatedChangeSet validate_changes(const std::string& preset_type,
++                                    const json& changes,
++                                    const DynamicPrintConfig& current,
++                                    const PresetBundle& bundle)
++{
++    if (!changes.is_object() || changes.empty())
++        throw BridgeError("INVALID_REQUEST", "changes must be a non-empty object");
++
++    ValidatedChangeSet result{DynamicPrintConfig(current)};
++    for (auto it = changes.begin(); it != changes.end(); ++it) {
++        const std::string key = it.key();
++        const WriteRule* rule = find_write_rule(preset_type, key);
++        if (rule == nullptr)
++            throw BridgeError("UNSUPPORTED_SETTING",
++                              "Unsupported " + preset_type + " setting: " + key);
++
++        const std::string serialized = json_value_as_serialized(it.value(), key);
++        if (rule->scalar_kind != ScalarKind::Boolean)
++            (void) parse_scalar_value(serialized, *rule, key);
++
++        const ConfigOption* existing = result.updated.option(key);
++        if (existing == nullptr)
++            throw BridgeError("SETTING_NOT_AVAILABLE",
++                              "Current " + preset_type +
++                                  " setting is not available: " + key);
++        if (existing->type() != rule->option_type)
++            throw BridgeError(
++                "SETTING_TYPE_MISMATCH",
++                "Current ConfigOption type does not match the controlled rule for " + key);
++
++        std::unique_ptr<ConfigOption> replacement(existing->clone());
++        if (!replacement->deserialize(serialized))
++            throw BridgeError("INVALID_SETTING_VALUE",
++                              "Invalid serialized value for " + key);
++        validate_rule_value(it.value(), *replacement, *rule, bundle);
++
++        const std::string before = existing->serialize();
++        const std::string after  = replacement->serialize();
+         result.before[key] = before;
+         result.after[key]  = after;
+-        result.deltas[key] = {{"before", before}, {"after", after}};
+-        result.updated.set_key_value(key, replacement.release());
+-    }
+-    return result;
+-}
++        result.deltas[key] = {{"before", before}, {"after", after}};
++        result.updated.set_key_value(key, replacement.release());
++    }
++
++    if (preset_type == "filament") {
++        const WriteRule* minimum_rule =
++            find_write_rule("filament", "fan_min_speed");
++        const WriteRule* maximum_rule =
++            find_write_rule("filament", "fan_max_speed");
++        const ConfigOption* minimum =
++            result.updated.option("fan_min_speed");
++        const ConfigOption* maximum =
++            result.updated.option("fan_max_speed");
++        if (minimum_rule != nullptr && maximum_rule != nullptr &&
++            minimum != nullptr && maximum != nullptr &&
++            parse_scalar_value(minimum->serialize(), *minimum_rule, "fan_min_speed") >
++                parse_scalar_value(maximum->serialize(), *maximum_rule, "fan_max_speed"))
++            throw BridgeError(
++                "SETTING_RELATION_INVALID",
++                "fan_min_speed cannot be greater than fan_max_speed");
++    }
++    return result;
++}
+ 
+ void apply_serialized_values(DynamicPrintConfig& target, const json& values)
+ {
+@@ -575,14 +790,15 @@ json project_placement_summary(Plater& plater)
+ 
+ } // namespace
+ 
+-struct PresetAssistantBridge::RollbackRecord
+-{
+-    std::string id;
+-    uint64_t    valid_at_revision{0};
+-    std::string destination;
+-    std::string original_preset_name;
+-    std::string target_preset_name;
+-    json        before;
++struct PresetAssistantBridge::RollbackRecord
++{
++    std::string id;
++    uint64_t    valid_at_revision{0};
++    std::string destination;
++    std::string preset_type;
++    std::string original_preset_name;
++    std::string target_preset_name;
++    json        before;
+     json        after;
+ };
+ 
+@@ -608,14 +824,54 @@ bool PresetAssistantBridge::is_trusted_source(
+     return !trusted_file.empty() && candidate_file == trusted_file;
+ }
+ 
+-bool PresetAssistantBridge::preserves_created_preset_on_rollback(
+-    const std::string& destination)
+-{
+-    return destination == "save-as-new-preset";
+-}
+-
+-bool PresetAssistantBridge::has_explicit_panel_approval(const json& params)
+-{
++bool PresetAssistantBridge::preserves_created_preset_on_rollback(
++    const std::string& destination)
++{
++    return destination == "save-as-new-preset";
++}
++
++bool PresetAssistantBridge::is_preset_type_writable(
++    const std::string& preset_type)
++{
++    return preset_type == "process" || preset_type == "filament";
++}
++
++bool PresetAssistantBridge::is_supported_write_setting(
++    const std::string& preset_type,
++    const std::string& key)
++{
++    return find_write_rule(preset_type, key) != nullptr;
++}
++
++json PresetAssistantBridge::write_capabilities()
++{
++    json process = json::array();
++    for (const WriteRule& rule : process_write_rules())
++        process.push_back(serialized_write_rule(rule));
++
++    json filament = json::array();
++    for (const WriteRule& rule : filament_write_rules())
++        filament.push_back(serialized_write_rule(rule));
++
++    return {
++        {"process", {
++            {"access", "controlled-write"},
++            {"settings", std::move(process)},
++        }},
++        {"filament", {
++            {"access", "controlled-write"},
++            {"settings", std::move(filament)},
++        }},
++        {"machine", {
++            {"access", "read-only"},
++            {"settings", json::array()},
++            {"reason", "Machine parameters can affect motion safety and remain Orca-owned"},
++        }},
++    };
++}
++
++bool PresetAssistantBridge::has_explicit_panel_approval(const json& params)
++{
+     if (!params.is_object())
+         return false;
+     auto approved_at = params.find("approvedAt");
+@@ -740,11 +996,12 @@ json PresetAssistantBridge::state_get(const json& params)
+         {"workspaceActive", bundle.has_external_user_presets_root()},
+         {"restartRequired", m_pending_restart},
+         {"projectDirty", plater.is_project_dirty()},
+-        {"presetsDirty", plater.is_presets_dirty()},
+-        {"presets", current_preset_state(bundle)},
+-        {"pendingPrintArchiveAvailable", !m_pending_print_archive.is_null()},
+-        {"modelGeometryIncluded", false},
+-    };
++        {"presetsDirty", plater.is_presets_dirty()},
++        {"presets", current_preset_state(bundle)},
++        {"writeCapabilities", write_capabilities()},
++        {"pendingPrintArchiveAvailable", !m_pending_print_archive.is_null()},
++        {"modelGeometryIncluded", false},
++    };
+ }
+ 
+ json PresetAssistantBridge::settings_get(const json& params)
+@@ -756,12 +1013,13 @@ json PresetAssistantBridge::settings_get(const json& params)
+ 
+     PresetBundle& bundle = require_bundle();
+     return {
+-        {"authorization", "settings:read"},
+-        {"presets", current_preset_state(bundle)},
+-        {"effective", serialized_settings(bundle.full_config())},
+-        {"modelGeometryIncluded", false},
+-    };
+-}
++        {"authorization", "settings:read"},
++        {"presets", current_preset_state(bundle)},
++        {"effective", serialized_settings(bundle.full_config())},
++        {"writeCapabilities", write_capabilities()},
++        {"modelGeometryIncluded", false},
++    };
++}
+ 
+ json PresetAssistantBridge::project_get(const json& params)
+ {
+@@ -966,26 +1224,26 @@ json PresetAssistantBridge::proposal_apply(const json& params)
+     (void) reason;
+     (void) approved_at;
+ 
+-    if (preset_type != "process")
+-        throw BridgeError("UNSUPPORTED_PRESET_TYPE",
+-                          "The current native write whitelist supports process settings only");
++    if (!is_preset_type_writable(preset_type))
++        (void) writable_preset_type(preset_type);
+     if (destination != "current-project" &&
+         destination != "update-current-preset" &&
+         destination != "save-as-new-preset")
+         throw BridgeError("INVALID_DESTINATION",
+                           "An explicit supported destination is required");
+-    if (!params.contains("changes"))
+-        throw BridgeError("INVALID_REQUEST", "changes is required");
+-
+-    PresetBundle& bundle = require_bundle();
+-    Tab& tab = require_process_tab();
++    if (!params.contains("changes"))
++        throw BridgeError("INVALID_REQUEST", "changes is required");
++
++    PresetBundle& bundle = require_bundle();
++    Tab& tab = require_preset_tab(preset_type);
+     PresetCollection& collection = *tab.get_presets();
+     const Preset selected_before = collection.get_selected_preset();
+     const DynamicPrintConfig config_before(*tab.get_config());
+     if (selected_before.name != expected_preset_name)
+-        throw BridgeError(
+-            "PRESET_SELECTION_CHANGED",
+-            "The selected process preset changed after the proposal was prepared");
++        throw BridgeError(
++            "PRESET_SELECTION_CHANGED",
++            "The selected " + preset_type +
++                " preset changed after the proposal was prepared");
+ 
+     if (destination != "current-project" &&
+         !bundle.has_external_user_presets_root())
+@@ -1008,8 +1266,8 @@ json PresetAssistantBridge::proposal_apply(const json& params)
+                           "newName is only valid for save-as-new-preset");
+     }
+ 
+-    ValidatedChangeSet validated =
+-        validate_process_changes(params["changes"], config_before, bundle);
++    ValidatedChangeSet validated =
++        validate_changes(preset_type, params["changes"], config_before, bundle);
+     bool changed = false;
+     for (auto it = validated.deltas.begin(); it != validated.deltas.end(); ++it)
+         changed = changed ||
+@@ -1018,10 +1276,11 @@ json PresetAssistantBridge::proposal_apply(const json& params)
+     if (!changed) {
+         return {
+             {"authority", "orca"},
+-            {"status", "unchanged"},
+-            {"applied", false},
+-            {"destination", destination},
+-            {"targetPreset", target_name},
++            {"status", "unchanged"},
++            {"applied", false},
++            {"destination", destination},
++            {"presetType", preset_type},
++            {"targetPreset", target_name},
+             {"changes", validated.deltas},
+             {"before", validated.before},
+             {"after", validated.after},
+@@ -1077,9 +1336,10 @@ json PresetAssistantBridge::proposal_apply(const json& params)
+ 
+     advance_revision();
+     m_rollback = std::make_unique<RollbackRecord>();
+-    m_rollback->id                   = new_id();
+-    m_rollback->valid_at_revision    = m_revision;
+-    m_rollback->destination          = destination;
++    m_rollback->id                   = new_id();
++    m_rollback->valid_at_revision    = m_revision;
++    m_rollback->destination          = destination;
++    m_rollback->preset_type          = preset_type;
+     m_rollback->original_preset_name = selected_before.name;
+     m_rollback->target_preset_name   = target_name;
+     m_rollback->before               = validated.before;
+@@ -1087,10 +1347,11 @@ json PresetAssistantBridge::proposal_apply(const json& params)
+ 
+     return {
+         {"authority", "orca"},
+-        {"status", "applied"},
+-        {"applied", true},
+-        {"destination", destination},
+-        {"targetPreset", target_name},
++        {"status", "applied"},
++        {"applied", true},
++        {"destination", destination},
++        {"presetType", preset_type},
++        {"targetPreset", target_name},
+         {"changes", validated.deltas},
+         {"before", validated.before},
+         {"after", validated.after},
+@@ -1110,9 +1371,9 @@ json PresetAssistantBridge::proposal_rollback(const json& params)
+         throw BridgeError("ROLLBACK_GUARD_EXPIRED",
+                           "Rollback guard is missing, stale, or already used");
+ 
+-    Tab& tab = require_process_tab();
+-    PresetCollection& collection = *tab.get_presets();
+-    const RollbackRecord record = *m_rollback;
++    const RollbackRecord record = *m_rollback;
++    Tab& tab = require_preset_tab(record.preset_type);
++    PresetCollection& collection = *tab.get_presets();
+ 
+     if (!values_match(*tab.get_config(), record.after))
+         throw BridgeError("ROLLBACK_CONFLICT",
+@@ -1150,9 +1411,10 @@ json PresetAssistantBridge::proposal_rollback(const json& params)
+     return {
+         {"authority", "orca"},
+         {"status", "rolled-back"},
+-        {"rolledBack", true},
+-        {"destination", record.destination},
+-        {"targetPreset", record.original_preset_name},
++        {"rolledBack", true},
++        {"destination", record.destination},
++        {"presetType", record.preset_type},
++        {"targetPreset", record.original_preset_name},
+         {"preservedNewPreset",
+             record.destination == "save-as-new-preset"
+                 ? json(record.target_preset_name)
+diff --git a/src/slic3r/GUI/PresetAssistantBridge.hpp b/src/slic3r/GUI/PresetAssistantBridge.hpp
+index 7bebf56..984a196 100644
+--- a/src/slic3r/GUI/PresetAssistantBridge.hpp
++++ b/src/slic3r/GUI/PresetAssistantBridge.hpp
+@@ -30,9 +30,14 @@ public:
+ 
+     static bool is_trusted_source(const std::string& candidate_url,
+                                   const std::string& trusted_page_url);
+-    static bool has_explicit_panel_approval(const nlohmann::json& params);
+-    static bool preserves_created_preset_on_rollback(
+-        const std::string& destination);
++    static bool has_explicit_panel_approval(const nlohmann::json& params);
++    static bool preserves_created_preset_on_rollback(
++        const std::string& destination);
++    static bool is_preset_type_writable(const std::string& preset_type);
++    static bool is_supported_write_setting(
++        const std::string& preset_type,
++        const std::string& key);
++    static nlohmann::json write_capabilities();
+ 
+ private:
+     struct RollbackRecord;
+diff --git a/tests/slic3rutils/test_preset_assistant_bridge.cpp b/tests/slic3rutils/test_preset_assistant_bridge.cpp
+index 984aca6..594549e 100644
+--- a/tests/slic3rutils/test_preset_assistant_bridge.cpp
++++ b/tests/slic3rutils/test_preset_assistant_bridge.cpp
+@@ -187,13 +187,58 @@ TEST_CASE("Preset Assistant bridge requires explicit panel approval before runti
+     CHECK(response["error"]["code"] == "CONSENT_REQUIRED");
+ }
+ 
+-TEST_CASE("Preset Assistant rollback keeps a newly saved permanent preset",
+-          "[PresetAssistant][Bridge]")
+-{
++TEST_CASE("Preset Assistant rollback keeps a newly saved permanent preset",
++          "[PresetAssistant][Bridge]")
++{
+     CHECK(PresetAssistantBridge::preserves_created_preset_on_rollback(
+         "save-as-new-preset"));
+     CHECK_FALSE(PresetAssistantBridge::preserves_created_preset_on_rollback(
+         "current-project"));
+-    CHECK_FALSE(PresetAssistantBridge::preserves_created_preset_on_rollback(
+-        "update-current-preset"));
+-}
++    CHECK_FALSE(PresetAssistantBridge::preserves_created_preset_on_rollback(
++        "update-current-preset"));
++}
++
++TEST_CASE("Preset Assistant exposes only the controlled preset write surface",
++          "[PresetAssistant][Bridge]")
++{
++    CHECK(PresetAssistantBridge::is_preset_type_writable("process"));
++    CHECK(PresetAssistantBridge::is_preset_type_writable("filament"));
++    CHECK_FALSE(PresetAssistantBridge::is_preset_type_writable("machine"));
++    CHECK_FALSE(PresetAssistantBridge::is_preset_type_writable("printer"));
++
++    CHECK(PresetAssistantBridge::is_supported_write_setting(
++        "process", "layer_height"));
++    CHECK(PresetAssistantBridge::is_supported_write_setting(
++        "process", "outer_wall_acceleration"));
++    CHECK(PresetAssistantBridge::is_supported_write_setting(
++        "process", "enable_support"));
++    CHECK(PresetAssistantBridge::is_supported_write_setting(
++        "filament", "nozzle_temperature"));
++    CHECK(PresetAssistantBridge::is_supported_write_setting(
++        "filament", "filament_flow_ratio"));
++    CHECK(PresetAssistantBridge::is_supported_write_setting(
++        "filament", "fan_max_speed"));
++    CHECK_FALSE(PresetAssistantBridge::is_supported_write_setting(
++        "machine", "nozzle_diameter"));
++    CHECK_FALSE(PresetAssistantBridge::is_supported_write_setting(
++        "process", "machine_start_gcode"));
++    CHECK_FALSE(PresetAssistantBridge::is_supported_write_setting(
++        "filament", "filament_start_gcode"));
++
++    const json capabilities = PresetAssistantBridge::write_capabilities();
++    REQUIRE(capabilities["process"]["settings"].is_array());
++    REQUIRE(capabilities["filament"]["settings"].is_array());
++    CHECK(capabilities["process"]["access"] == "controlled-write");
++    CHECK(capabilities["filament"]["access"] == "controlled-write");
++    CHECK(capabilities["machine"]["access"] == "read-only");
++    CHECK(capabilities["machine"]["settings"].empty());
++    CHECK(capabilities["process"]["settings"].size() == 18);
++    CHECK(capabilities["filament"]["settings"].size() == 16);
++
++    const json layer_rule = capabilities["process"]["settings"].front();
++    CHECK(layer_rule["key"] == "layer_height");
++    CHECK(layer_rule["minimum"] == 0.04);
++    CHECK(layer_rule["maximum"].is_null());
++    CHECK(layer_rule["dynamicMaximum"] ==
++          "80-percent-of-smallest-active-nozzle");
++}

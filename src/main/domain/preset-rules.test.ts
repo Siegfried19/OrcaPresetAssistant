@@ -10,35 +10,30 @@ describe('preset identity rules', () => {
   })
 
   it('accepts a registered process preset', () => {
-    const messages = validatePresetIdentity(
-      'process',
-      '0.18mm Balanced',
-      {
-        name: '0.18mm Balanced',
-        print_settings_id: '0.18mm Balanced',
-      },
-      true,
-    )
+    const messages = validatePresetIdentity('process', '0.18mm Balanced', {
+      name: '0.18mm Balanced',
+      print_settings_id: '0.18mm Balanced',
+    })
 
     expect(messages).toEqual([])
   })
 
   it('reports structural mismatches independently', () => {
-    const messages = validatePresetIdentity(
-      'filament',
-      'Expected name',
-      {
-        name: 'Other name',
-        filament_settings_id: ['Other id'],
-      },
-      false,
-    )
+    const messages = validatePresetIdentity('filament', 'Expected name', {
+      name: 'Other name',
+      filament_settings_id: ['Other id'],
+    })
 
-    expect(messages).toEqual([
-      'filename-name-mismatch',
-      'settings-id-filename-mismatch',
-      'missing-info',
-    ])
+    expect(messages).toEqual(['filename-name-mismatch', 'settings-id-filename-mismatch'])
+  })
+
+  it('accepts a local-only preset without cloud identity metadata', () => {
+    expect(
+      validatePresetIdentity('process', 'Local preset', {
+        name: 'Local preset',
+        print_settings_id: 'Local preset',
+      }),
+    ).toEqual([])
   })
 
   it('creates stable ids with forward slashes', () => {

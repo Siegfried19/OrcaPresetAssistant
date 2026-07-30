@@ -10,7 +10,7 @@ export function createMainWindow(): BrowserWindow {
     minWidth: 1080,
     minHeight: 700,
     show: false,
-    title: 'Bambu Preset Dashboard',
+    title: 'Orca Preset Assistant',
     backgroundColor: '#f4f5f7',
     titleBarStyle: 'hidden',
     titleBarOverlay: {
@@ -32,7 +32,7 @@ export function createMainWindow(): BrowserWindow {
   })
 
   const devServerUrl = process.env.ELECTRON_RENDERER_URL
-  const screenshotLanguage = process.env.BAMBU_DASHBOARD_SCREENSHOT_LANGUAGE
+  const screenshotLanguage = process.env.ORCA_PRESET_ASSISTANT_SCREENSHOT_LANGUAGE
   const query =
     screenshotLanguage === 'zh-CN' || screenshotLanguage === 'en'
       ? { language: screenshotLanguage }
@@ -45,7 +45,7 @@ export function createMainWindow(): BrowserWindow {
     void window.loadFile(join(__dirname, '../renderer/index.html'), { query })
   }
 
-  const screenshotPath = process.env.BAMBU_DASHBOARD_SCREENSHOT
+  const screenshotPath = process.env.ORCA_PRESET_ASSISTANT_SCREENSHOT
   if (screenshotPath) {
     window.webContents.once('did-finish-load', () => {
       setTimeout(() => {

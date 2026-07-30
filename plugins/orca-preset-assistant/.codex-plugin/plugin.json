@@ -1,0 +1,19 @@
+{
+  "name": "orca-preset-assistant",
+  "version": "0.1.0+codex.20260730193432",
+  "description": "Permission-aware access to Orca presets, live settings, current-project geometry, and print evidence.",
+  "author": {
+    "name": "Bowen"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Orca Preset Assistant",
+    "shortDescription": "Review Orca settings and current-project geometry.",
+    "longDescription": "Read user presets and print evidence, request live Orca settings or the open project's parts, placement, and model geometry only when the matching permission is enabled, and queue clearly scoped parameter proposals for approval in Orca.",
+    "developerName": "Bowen",
+    "category": "Productivity",
+    "capabilities": ["Local presets", "Current-project geometry", "Print history"],
+    "defaultPrompt": "Review my Orca settings without reading model geometry."
+  },
+  "mcpServers": "./.mcp.json"
+}

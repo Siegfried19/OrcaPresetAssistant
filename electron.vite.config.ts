@@ -23,6 +23,7 @@ export default defineConfig({
   },
   renderer: {
     root: 'src/renderer',
+    base: './',
     resolve: {
       alias: {
         '@renderer': resolve('src/renderer/src'),

@@ -1,25 +1,59 @@
+import { lstat } from 'node:fs/promises'
+import { extname, isAbsolute, resolve } from 'node:path'
+
 import { shell } from 'electron'
 
 import { MATERIAL_ROLES } from '@shared/contracts'
 import type {
   AppErrorCode,
+  ApproveChangeProposalRequest,
+  ChangeProposalView,
+  CodexPermissionScope,
   DashboardWarning,
   DashboardSnapshot,
+  GuardProposalRollbackRequest,
   MaterialRole,
   PresetDiff,
   PresetView,
+  QueueChangeProposalRequest,
   RecordPrintRequest,
+  RollbackGuardResult,
   RootSource,
+  UpdatePrintHistoryRequest,
+  UpdateSettingsRequest,
 } from '@shared/contracts'
+import type {
+  CompleteChangeProposalRequest,
+  OrcaPrintArchiveRequest,
+  PrepareProjectExportResult,
+  PublishNativeStateRequest,
+  PublishedNativeState,
+} from '@shared/helper-http'
 
-import type { InternalPreset, RootResolution } from '../domain/models'
+import type { AppConfig, InternalPreset, RootResolution } from '../domain/models'
 import { isPrintResult } from '../domain/preset-rules'
-import { findBambuExecutable, launchDetached } from '../infrastructure/bambu-service'
-import { ConfigStore } from '../infrastructure/config-store'
-import { discoverPresetRoot, isPresetRoot } from '../infrastructure/discovery'
-import { appendPrintEvent, applyLatestPrints } from '../infrastructure/event-store'
+import { ChangeProposalStore } from '../infrastructure/change-proposal-store'
+import { CodexSessionStore } from '../infrastructure/codex-session-store'
+import { ConfigStore, DEFAULT_APP_CONFIG } from '../infrastructure/config-store'
+import {
+  discoverWorkspaceRoot,
+  ensureWorkspaceRoot,
+  workspacePaths,
+} from '../infrastructure/discovery'
 import { applyGitState, readGitSnapshot, readPresetDiff } from '../infrastructure/git-service'
+import { findOrcaExecutable, launchDetached } from '../infrastructure/orca-service'
+import { NativeStateStore } from '../infrastructure/native-state-store'
 import { scanPresets } from '../infrastructure/preset-repository'
+import {
+  applyLatestPrints,
+  createOrcaPrintHistoryBundle,
+  createPrintHistoryBundle,
+  listPrintHistory,
+  prepareProject3mfExport,
+  resolvePrintHistoryBundlePath,
+  updatePrintHistoryRecord,
+  validateProject3mf,
+} from '../infrastructure/print-history-store'
 
 interface RefreshResult {
   readonly snapshot: DashboardSnapshot
@@ -34,6 +68,7 @@ function toPresetView(preset: InternalPreset): PresetView {
   return {
     id: preset.id,
     kind: preset.kind,
+    origin: preset.infoPath ? 'orca-managed' : 'local-json',
     name: preset.name,
     inherits: preset.inherits,
     settingsId: preset.settingsId,
@@ -43,6 +78,7 @@ function toPresetView(preset: InternalPreset): PresetView {
     diffStats: preset.diffStats,
     validationIssues: preset.validationIssues,
     latestPrint: preset.latestPrint,
+    isSystem: preset.isSystem,
   }
 }
 
@@ -51,8 +87,12 @@ function snapshotSignature(snapshot: DashboardSnapshot): string {
     root: snapshot.root,
     stats: snapshot.stats,
     warnings: snapshot.warnings,
+    settings: snapshot.settings,
+    changeProposals: snapshot.changeProposals,
+    printHistory: snapshot.printHistory,
     presets: snapshot.presets.map((preset) => ({
       id: preset.id,
+      origin: preset.origin,
       modifiedAt: preset.modifiedAt,
       gitState: preset.gitState,
       diffStats: preset.diffStats,
@@ -63,33 +103,122 @@ function snapshotSignature(snapshot: DashboardSnapshot): string {
 }
 
 export class DashboardService {
-  private readonly appDataPath: string
   private readonly configStore: ConfigStore
+  private readonly proposalStore: ChangeProposalStore
+  private readonly codexSessionStore: CodexSessionStore
+  private readonly nativeStateStore: NativeStateStore
+  private config: AppConfig = DEFAULT_APP_CONFIG
   private root: RootResolution | null = null
   private presets: InternalPreset[] = []
   private snapshot: DashboardSnapshot | null = null
   private signature = ''
   private refreshInFlight: Promise<RefreshResult> | null = null
+  private readonly project3mfGrants = new Set<string>()
+  private sessionCodexScope: CodexPermissionScope | null = null
 
-  public constructor(appDataPath: string, userDataPath: string) {
-    this.appDataPath = appDataPath
+  public constructor(userDataPath: string) {
     this.configStore = new ConfigStore(userDataPath)
+    this.proposalStore = new ChangeProposalStore(userDataPath)
+    this.codexSessionStore = new CodexSessionStore(userDataPath)
+    this.nativeStateStore = new NativeStateStore(userDataPath)
   }
 
   public async initialize(): Promise<DashboardSnapshot> {
-    const config = await this.configStore.read()
-    this.root = await discoverPresetRoot(this.appDataPath, config.presetRoot)
+    this.config = await this.configStore.read()
+    const validGrants = (
+      await Promise.all(
+        this.config.codexPermissions.fileGrants.map((path) =>
+          validateCodexFile(path).catch(() => null),
+        ),
+      )
+    ).filter((path): path is string => path !== null)
+    if (validGrants.length !== this.config.codexPermissions.fileGrants.length) {
+      this.config = await this.configStore.saveCodexPermissions(
+        this.config.codexPermissions.scope,
+        validGrants,
+      )
+    }
+    this.root = await discoverWorkspaceRoot(this.config.workspaceRoot)
     return (await this.refresh()).snapshot
   }
 
   public async setRoot(path: string, source: RootSource = 'manual'): Promise<DashboardSnapshot> {
-    if (!(await isPresetRoot(path))) {
-      throw appError('invalid-preset-root')
+    let workspace
+    try {
+      workspace = await ensureWorkspaceRoot(path)
+    } catch {
+      throw appError('invalid-workspace-root')
     }
 
-    this.root = { path, source }
-    await this.configStore.savePresetRoot(path)
+    this.root = { path: workspace.root, source }
+    this.config = await this.configStore.saveWorkspaceRoot(workspace.root)
     return (await this.refresh()).snapshot
+  }
+
+  public async updateSettings(request: UpdateSettingsRequest): Promise<DashboardSnapshot> {
+    if (
+      typeof request !== 'object' ||
+      request === null ||
+      (request.language !== undefined &&
+        request.language !== 'zh-CN' &&
+        request.language !== 'en') ||
+      (request.autoArchive !== undefined && typeof request.autoArchive !== 'boolean') ||
+      (request.threeMfPolicy !== undefined &&
+        request.threeMfPolicy !== 'always' &&
+        request.threeMfPolicy !== 'ask' &&
+        request.threeMfPolicy !== 'never')
+    ) {
+      throw appError('invalid-change-proposal')
+    }
+    this.config = await this.configStore.saveSettings(request)
+    return (await this.refresh()).snapshot
+  }
+
+  public async setCodexScope(scope: CodexPermissionScope): Promise<DashboardSnapshot> {
+    if (scope !== 'general' && scope !== 'current-settings' && scope !== 'current-project') {
+      throw appError('invalid-permission-scope')
+    }
+    if (scope === 'current-project') {
+      this.sessionCodexScope = scope
+      return (await this.refresh()).snapshot
+    }
+    this.sessionCodexScope = null
+    this.config = await this.configStore.saveCodexPermissions(
+      scope,
+      this.config.codexPermissions.fileGrants,
+    )
+    return (await this.refresh()).snapshot
+  }
+
+  public async grantCodexFile(path: string): Promise<DashboardSnapshot> {
+    const normalized = await validateCodexFile(path)
+    const grants = [...new Set([...this.config.codexPermissions.fileGrants, normalized])]
+    this.config = await this.configStore.saveCodexPermissions(
+      this.config.codexPermissions.scope,
+      grants,
+    )
+    return (await this.refresh()).snapshot
+  }
+
+  public async revokeCodexFile(path: string): Promise<DashboardSnapshot> {
+    if (typeof path !== 'string') throw appError('invalid-file-grant')
+    const normalized = resolve(path)
+    const grants = this.config.codexPermissions.fileGrants.filter(
+      (candidate) => resolve(candidate) !== normalized,
+    )
+    this.config = await this.configStore.saveCodexPermissions(
+      this.config.codexPermissions.scope,
+      grants,
+    )
+    return (await this.refresh()).snapshot
+  }
+
+  public async grantProject3mf(path: string): Promise<string> {
+    const normalized = await validateProject3mf(path).catch(() => {
+      throw appError('invalid-project-3mf')
+    })
+    this.project3mfGrants.add(normalized)
+    return normalized
   }
 
   public async refresh(): Promise<RefreshResult> {
@@ -110,10 +239,172 @@ export class DashboardService {
 
   public async recordPrint(request: RecordPrintRequest): Promise<DashboardSnapshot> {
     const { processPreset, materials } = this.validateRecordRequest(request)
-    if (!this.root) throw appError('preset-root-not-connected')
+    if (!this.root) throw appError('workspace-not-connected')
+    let project3mfPath: string | undefined
+    if (request.project3mfPath !== undefined) {
+      if (this.config.threeMfPolicy === 'never') {
+        throw appError('invalid-project-3mf')
+      }
+      project3mfPath = await validateProject3mf(request.project3mfPath).catch(() => {
+        throw appError('invalid-project-3mf')
+      })
+      if (!this.project3mfGrants.delete(project3mfPath)) {
+        throw appError('project-3mf-not-granted')
+      }
+    }
 
-    await appendPrintEvent(this.root.path, processPreset, materials, request.result, request.note)
+    await createPrintHistoryBundle(
+      this.root.path,
+      processPreset,
+      materials,
+      request.result,
+      request.note,
+      project3mfPath,
+    )
     return (await this.refresh()).snapshot
+  }
+
+  // Authenticated native/Orca integration entry. This is intentionally not exposed through preload.
+  public async recordOrcaPrint(request: OrcaPrintArchiveRequest): Promise<DashboardSnapshot> {
+    if (!this.root) throw appError('workspace-not-connected')
+    if (!this.config.autoArchive) return (await this.refresh()).snapshot
+    let project3mfPath: string | undefined
+    if (request.project3mfPath !== undefined) {
+      if (this.config.threeMfPolicy === 'never') {
+        throw appError('invalid-project-3mf')
+      }
+      project3mfPath = await validateProject3mf(request.project3mfPath).catch(() => {
+        throw appError('invalid-project-3mf')
+      })
+      if (this.config.threeMfPolicy === 'ask' && !this.project3mfGrants.delete(project3mfPath)) {
+        throw appError('project-3mf-not-granted')
+      }
+    }
+    await createOrcaPrintHistoryBundle(
+      this.root.path,
+      request.archiveId,
+      request.effectiveSettings,
+      project3mfPath,
+      this.config.threeMfPolicy === 'ask',
+    )
+    return (await this.refresh()).snapshot
+  }
+
+  public async updatePrintHistory(request: UpdatePrintHistoryRequest): Promise<DashboardSnapshot> {
+    if (!this.root) throw appError('workspace-not-connected')
+    if (
+      !request ||
+      typeof request.id !== 'string' ||
+      !isPrintResult(request.result) ||
+      typeof request.note !== 'string' ||
+      request.note.length > 2_000
+    ) {
+      throw appError('invalid-print-result')
+    }
+    await updatePrintHistoryRecord(this.root.path, request).catch((error: unknown) => {
+      if (error instanceof Error && error.message === 'print-history-not-found') {
+        throw appError('print-history-not-found')
+      }
+      throw error
+    })
+    return (await this.refresh()).snapshot
+  }
+
+  public async openPrintHistoryRecord(id: string): Promise<void> {
+    if (!this.root) throw appError('workspace-not-connected')
+    const path = await resolvePrintHistoryBundlePath(this.root.path, id).catch(() => {
+      throw appError('print-history-not-found')
+    })
+    const message = await shell.openPath(path)
+    if (message) throw new Error(message)
+  }
+
+  public async deletePrintHistory(id: string): Promise<DashboardSnapshot> {
+    if (!this.root) throw appError('workspace-not-connected')
+    const path = await resolvePrintHistoryBundlePath(this.root.path, id).catch(() => {
+      throw appError('print-history-not-found')
+    })
+    await shell.trashItem(path)
+    return (await this.refresh()).snapshot
+  }
+
+  public async listChangeProposals(): Promise<readonly ChangeProposalView[]> {
+    return this.proposalStore.list()
+  }
+
+  public async queueChangeProposal(
+    request: QueueChangeProposalRequest,
+  ): Promise<ChangeProposalView> {
+    await this.requireValidProposalTarget(request)
+    return this.proposalStore.queue(request)
+  }
+
+  public async approveChangeProposal(
+    request: ApproveChangeProposalRequest,
+  ): Promise<ChangeProposalView> {
+    if (!request || typeof request.id !== 'string' || !request.id) {
+      throw appError('invalid-change-proposal')
+    }
+    const proposal = (await this.proposalStore.list()).find(
+      (candidate) => candidate.id === request.id,
+    )
+    if (!proposal) throw appError('change-proposal-not-found')
+    await this.requireValidProposalTarget({
+      ...proposal,
+      destination: request.destination,
+      ...(request.newPresetName === undefined ? {} : { newPresetName: request.newPresetName }),
+    })
+    return this.proposalStore.approve(request)
+  }
+
+  public async rejectChangeProposal(id: string): Promise<ChangeProposalView> {
+    if (typeof id !== 'string' || !id) throw appError('invalid-change-proposal')
+    return this.proposalStore.reject(id)
+  }
+
+  public async completeChangeProposal(
+    request: CompleteChangeProposalRequest,
+  ): Promise<ChangeProposalView> {
+    return this.proposalStore.complete(request)
+  }
+
+  public async publishNativeState(
+    request: PublishNativeStateRequest,
+  ): Promise<PublishedNativeState> {
+    return this.nativeStateStore.publish(
+      this.sessionCodexScope ?? this.config.codexPermissions.scope,
+      request,
+    )
+  }
+
+  public async prepareProjectExport(
+    archiveId: string,
+    explicitConsent = false,
+  ): Promise<PrepareProjectExportResult> {
+    if (!this.root) throw appError('workspace-not-connected')
+    if (typeof explicitConsent !== 'boolean') throw appError('invalid-project-3mf')
+    if (!this.config.autoArchive) {
+      return { status: 'skipped', destinationPath: null, reason: 'auto-archive-disabled' }
+    }
+    if (this.config.threeMfPolicy === 'never') {
+      return { status: 'skipped', destinationPath: null, reason: 'policy-never' }
+    }
+    if (this.config.threeMfPolicy === 'ask' && !explicitConsent) {
+      return { status: 'skipped', destinationPath: null, reason: 'explicit-selection-required' }
+    }
+    const destinationPath = await prepareProject3mfExport(this.root.path, archiveId)
+    if (this.config.threeMfPolicy === 'ask') this.project3mfGrants.add(destinationPath)
+    return {
+      status: 'ready',
+      destinationPath,
+      reason: null,
+    }
+  }
+
+  public async guardProposalRollback(
+    request: GuardProposalRollbackRequest,
+  ): Promise<RollbackGuardResult> {
+    return this.proposalStore.guardRollback(request)
   }
 
   public async getPresetDiff(presetId: string): Promise<PresetDiff> {
@@ -123,19 +414,22 @@ export class DashboardService {
   }
 
   public async openRoot(): Promise<void> {
-    if (!this.root) throw appError('preset-root-not-connected')
+    if (!this.root) throw appError('workspace-not-connected')
     const message = await shell.openPath(this.root.path)
     if (message) throw new Error(message)
   }
 
-  public async launchBambu(): Promise<void> {
-    const executable = this.snapshot?.root.bambuExecutable ?? (await findBambuExecutable())
-    if (!executable) throw appError('bambu-not-found')
+  public async launchOrca(): Promise<void> {
+    const executable = this.snapshot?.root.orcaExecutable ?? (await findOrcaExecutable())
+    if (!executable) throw appError('orca-not-found')
     launchDetached(executable)
   }
 
   private async performRefresh(): Promise<RefreshResult> {
     const previousSignature = this.signature
+    await this.codexSessionStore.heartbeat(
+      this.sessionCodexScope ?? this.config.codexPermissions.scope,
+    )
     if (!this.root) {
       const emptySnapshot = this.createEmptySnapshot()
       this.snapshot = emptySnapshot
@@ -143,33 +437,43 @@ export class DashboardService {
       return { snapshot: emptySnapshot, changed: this.signature !== previousSignature }
     }
 
-    const [presets, gitSnapshot, bambuExecutable] = await Promise.all([
-      scanPresets(this.root.path),
-      readGitSnapshot(this.root.path),
-      findBambuExecutable(),
+    const paths = workspacePaths(this.root.path)
+    const [presets, gitSnapshot, orcaExecutable, printHistory] = await Promise.all([
+      scanPresets(paths.userPresets),
+      readGitSnapshot(paths.userPresets),
+      findOrcaExecutable(),
+      listPrintHistory(this.root.path),
     ])
     await Promise.all([
-      applyGitState(this.root.path, presets, gitSnapshot),
+      applyGitState(paths.userPresets, presets, gitSnapshot),
       applyLatestPrints(this.root.path, presets),
     ])
     this.presets = presets
+    await this.proposalStore.importInbox(async (request) => {
+      try {
+        if ((this.sessionCodexScope ?? this.config.codexPermissions.scope) === 'general') {
+          return false
+        }
+        await this.requireValidProposalTarget(request)
+        return true
+      } catch {
+        return false
+      }
+    })
+    const changeProposals = await this.proposalStore.list()
 
     const warnings: DashboardWarning[] = []
-    if (!gitSnapshot.isRepository) {
-      warnings.push('git-unavailable')
-    }
-    if (!bambuExecutable) {
-      warnings.push('bambu-unavailable')
-    }
 
     const views = presets.map(toPresetView)
     const snapshot: DashboardSnapshot = {
       generatedAt: new Date().toISOString(),
       root: {
         path: this.root.path,
+        userPresetsPath: paths.userPresets,
+        printHistoryPath: paths.printHistory,
         source: this.root.source,
         isGitRepository: gitSnapshot.isRepository,
-        bambuExecutable,
+        orcaExecutable,
       },
       stats: {
         total: views.length,
@@ -181,6 +485,9 @@ export class DashboardService {
         needsAttention: views.filter((preset) => preset.validationIssues.length > 0).length,
       },
       presets: views,
+      printHistory,
+      settings: settingsView(this.config, this.sessionCodexScope),
+      changeProposals,
       warnings,
     }
 
@@ -194,9 +501,11 @@ export class DashboardService {
       generatedAt: new Date().toISOString(),
       root: {
         path: '',
+        userPresetsPath: '',
+        printHistoryPath: '',
         source: 'automatic',
         isGitRepository: false,
-        bambuExecutable: null,
+        orcaExecutable: null,
       },
       stats: {
         total: 0,
@@ -207,7 +516,10 @@ export class DashboardService {
         needsAttention: 0,
       },
       presets: [],
-      warnings: ['preset-root-not-found'],
+      printHistory: [],
+      settings: settingsView(this.config, this.sessionCodexScope),
+      changeProposals: [],
+      warnings: ['workspace-not-found'],
     }
   }
 
@@ -258,4 +570,84 @@ export class DashboardService {
 
     return { processPreset, materials }
   }
+
+  private async requireValidProposalTarget(
+    request: Pick<QueueChangeProposalRequest, 'presetId' | 'presetKind' | 'destination'>,
+  ): Promise<InternalPreset | null> {
+    if (
+      !request ||
+      typeof request.presetId !== 'string' ||
+      (request.presetKind !== 'machine' &&
+        request.presetKind !== 'process' &&
+        request.presetKind !== 'filament') ||
+      (request.destination !== 'current-project' &&
+        request.destination !== 'update-current-preset' &&
+        request.destination !== 'save-as-new-preset')
+    ) {
+      throw appError('invalid-change-proposal')
+    }
+    if (request.presetKind === 'machine') {
+      throw appError('invalid-change-proposal')
+    }
+    const preset = this.presets.find((candidate) => candidate.id === request.presetId)
+    if (!preset) {
+      if (request.destination !== 'save-as-new-preset') {
+        throw appError('invalid-change-proposal')
+      }
+      const nativeState = await this.nativeStateStore.readFresh()
+      const selections =
+        request.presetKind === 'process'
+          ? nativeState
+            ? [nativeState.selections.process]
+            : []
+          : (nativeState?.selections.filaments ?? [])
+      const selected = selections.find(
+        (selection) =>
+          request.presetId === selection.name ||
+          request.presetId === `orca:${request.presetKind}:${selection.name}`,
+      )
+      if (!selected || !selected.isSystem || selected.isUser) {
+        throw appError('invalid-change-proposal')
+      }
+      return null
+    }
+    if (preset.kind !== request.presetKind) {
+      throw appError('invalid-change-proposal')
+    }
+    if (preset.isSystem && request.destination === 'update-current-preset') {
+      throw appError('invalid-change-proposal')
+    }
+    return preset
+  }
+}
+
+function settingsView(
+  config: AppConfig,
+  sessionCodexScope: CodexPermissionScope | null,
+): DashboardSnapshot['settings'] {
+  return {
+    language: config.language,
+    autoArchive: config.autoArchive,
+    threeMfPolicy: config.threeMfPolicy,
+    codexPermissions: {
+      scope: sessionCodexScope ?? config.codexPermissions.scope,
+      fileGrants: [...config.codexPermissions.fileGrants],
+    },
+  }
+}
+
+async function validateCodexFile(path: string): Promise<string> {
+  if (
+    typeof path !== 'string' ||
+    !isAbsolute(path) ||
+    !['.stl', '.3mf'].includes(extname(path).toLowerCase())
+  ) {
+    throw appError('invalid-file-grant')
+  }
+  const normalized = resolve(path)
+  const value = await lstat(normalized).catch(() => null)
+  if (!value || !value.isFile() || value.isSymbolicLink()) {
+    throw appError('invalid-file-grant')
+  }
+  return normalized
 }

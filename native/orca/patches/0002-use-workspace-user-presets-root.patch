@@ -1,0 +1,396 @@
+diff --git a/src/libslic3r/PresetBundle.hpp b/src/libslic3r/PresetBundle.hpp
+--- a/src/libslic3r/PresetBundle.hpp
++++ b/src/libslic3r/PresetBundle.hpp
+@@ -213,6 +213,11 @@ public:
+     // BBS Load user presets
+     PresetsConfigSubstitutions load_user_presets(std::string user, ForwardCompatibilitySubstitutionRule rule);
+     PresetsConfigSubstitutions load_user_presets(AppConfig &config, std::map<std::string, std::map<std::string, std::string>>& my_presets, ForwardCompatibilitySubstitutionRule rule);
++    // Orca Preset Assistant: when configured, all native user-preset reads and
++    // writes use <workspace>/UserPresets while system presets remain unchanged.
++    void configure_user_presets_root(const AppConfig& config);
++    bool has_external_user_presets_root() const { return !m_external_user_presets_root.empty(); }
++    const boost::filesystem::path& external_user_presets_root() const { return m_external_user_presets_root; }
+     // Orca: Import subscribed bundle presets (load and save to disk in one operation), handles one bundle at a time
+     PresetsConfigSubstitutions update_subscribed_presets(AppConfig& config,
+                                                          const std::map<std::string, std::map<std::string, std::string>>& bundle_presets,
+@@ -419,6 +424,11 @@ private:
+     // Helper function: save preset to bundle directory with common logic
+     bool save_preset_to_bundle_dir(Preset& preset, PresetCollection* collection,
+                                    const std::string& bundle_id, const std::string& type_subdir,
+                                    const std::string& bundle_base_dir);
++
++    boost::filesystem::path resolve_user_presets_root(const std::string& preset_folder) const;
++    void ensure_user_presets_root(const boost::filesystem::path& root) const;
++
++    boost::filesystem::path m_external_user_presets_root;
+ 
+ };
+diff --git a/src/libslic3r/PresetBundle.cpp b/src/libslic3r/PresetBundle.cpp
+--- a/src/libslic3r/PresetBundle.cpp
++++ b/src/libslic3r/PresetBundle.cpp
+@@ -12,11 +12,13 @@
+ 
+ #include <algorithm>
++#include <array>
+ #include <mutex>
+ #include <set>
+ #include <fstream>
+ #include <unordered_set>
+ #include <boost/filesystem.hpp>
+ #include <boost/algorithm/clamp.hpp>
++#include <boost/algorithm/string/trim.hpp>
+ #include <boost/algorithm/string/predicate.hpp>
+ #include <boost/range/adaptor/transformed.hpp>
+ #include <boost/nowide/cstdio.hpp>
+@@ -452,6 +454,7 @@ PresetBundle& PresetBundle::operator=(const PresetBundle &rhs)
+     project_config      = rhs.project_config;
+     vendors             = rhs.vendors;
+     obsolete_presets    = rhs.obsolete_presets;
++    m_external_user_presets_root = rhs.m_external_user_presets_root;
+     m_errors    = rhs.m_errors;
+ 
+     // Adjust Preset::vendor pointers to point to the copied vendors map.
+@@ -558,6 +561,8 @@ PresetsConfigSubstitutions PresetBundle::load_presets(AppConfig &config, Forward
+ {
+     // First load the vendor specific system presets.
+     PresetsConfigSubstitutions substitutions;
++    // Resolve this before either account or default user presets are selected.
++    this->configure_user_presets_root(config);
+     std::string errors_cummulative;
+ 
+     //BBS: add config related logs
+@@ -984,18 +989,98 @@ std::string PresetBundle::get_hotend_model(const std::string& vendor_name, const
+     return out;
+ }
+ 
++void PresetBundle::configure_user_presets_root(const AppConfig& config)
++{
++    static constexpr const char* config_section = "orca_preset_assistant";
++    static constexpr const char* workspace_key  = "workspace";
++
++    const std::string configured_workspace =
++        boost::algorithm::trim_copy(config.get(config_section, workspace_key));
++    m_external_user_presets_root.clear();
++    if (configured_workspace.empty())
++        return;
++
++    boost::filesystem::path workspace(configured_workspace);
++    workspace.make_preferred();
++    if (!workspace.is_absolute())
++        throw Slic3r::RuntimeError(
++            "Orca Preset Assistant workspace must be an absolute path: " +
++            configured_workspace);
++
++    workspace = boost::filesystem::absolute(workspace).lexically_normal().make_preferred();
++    if (workspace == workspace.root_path())
++        throw Slic3r::RuntimeError(
++            "Orca Preset Assistant workspace cannot be a filesystem root: " +
++            workspace.string());
++
++    boost::system::error_code ec;
++    if (!boost::filesystem::exists(workspace))
++        boost::filesystem::create_directories(workspace, ec);
++    if (ec || !boost::filesystem::is_directory(workspace))
++        throw Slic3r::RuntimeError(
++            "Unable to use Orca Preset Assistant workspace " + workspace.string() +
++            (ec ? ": " + ec.message() : ": path is not a directory"));
++
++    const boost::filesystem::path external_root =
++        (workspace / "UserPresets").make_preferred();
++    boost::filesystem::create_directories(external_root, ec);
++    if (ec)
++        throw Slic3r::RuntimeError(
++            "Unable to create user preset root " + external_root.string() +
++            ": " + ec.message());
++
++    static constexpr std::array<const char*, 3> preset_subdirs{
++        PRESET_PRINTER_NAME,
++        PRESET_PRINT_NAME,
++        PRESET_FILAMENT_NAME
++    };
++    for (const char* subdir : preset_subdirs) {
++        boost::filesystem::create_directories(external_root / subdir, ec);
++        if (ec)
++            throw Slic3r::RuntimeError(
++                "Unable to create user preset directory " +
++                (external_root / subdir).string() + ": " + ec.message());
++    }
++
++    m_external_user_presets_root = external_root;
++    BOOST_LOG_TRIVIAL(info)
++        << "PresetBundle: external user preset root enabled at "
++        << m_external_user_presets_root.string()
++        << "; OrcaCloud user preset sync is disabled";
++}
++
++boost::filesystem::path PresetBundle::resolve_user_presets_root(
++    const std::string& preset_folder) const
++{
++    if (!m_external_user_presets_root.empty())
++        return m_external_user_presets_root;
++
++    const std::string folder =
++        preset_folder.empty() ? DEFAULT_USER_FOLDER_NAME : preset_folder;
++    return (boost::filesystem::path(data_dir()) / PRESET_USER_DIR / folder)
++        .make_preferred();
++}
++
++void PresetBundle::ensure_user_presets_root(
++    const boost::filesystem::path& root) const
++{
++    boost::system::error_code ec;
++    boost::filesystem::create_directories(root, ec);
++    if (ec || !boost::filesystem::is_directory(root))
++        throw Slic3r::RuntimeError(
++            "Unable to use user preset directory " + root.string() +
++            (ec ? ": " + ec.message() : ": path is not a directory"));
++}
++
+ PresetsConfigSubstitutions PresetBundle::load_user_presets(std::string user, ForwardCompatibilitySubstitutionRule substitution_rule)
+ {
+     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << __LINE__ << " entry and user is: " << user;
+     PresetsConfigSubstitutions substitutions;
+     std::string errors_cummulative;
+ 
+-    fs::path user_folder(data_dir() + "/" + PRESET_USER_DIR);
+-    if (!fs::exists(user_folder)) fs::create_directory(user_folder);
+-
+-    std::string dir_user_presets = data_dir() + "/" + PRESET_USER_DIR + "/" + user;
+-    fs::path    folder(user_folder / user);
+-    if (!fs::exists(folder)) fs::create_directory(folder);
++    const boost::filesystem::path folder = resolve_user_presets_root(user);
++    ensure_user_presets_root(folder);
++    const std::string dir_user_presets = folder.string();
+ 
+     bundles.WriteLock();
+     bundles.m_bundles.clear();
+@@ -1114,6 +1199,13 @@ PresetsConfigSubstitutions PresetBundle::load_user_presets(AppConfig &
+                                                            std::map<std::string, std::map<std::string, std::string>> &my_presets,
+                                                            ForwardCompatibilitySubstitutionRule                       substitution_rule)
+ {
++    if (has_external_user_presets_root()) {
++        BOOST_LOG_TRIVIAL(info)
++            << __FUNCTION__
++            << ": ignored OrcaCloud presets because an external workspace is active";
++        return PresetsConfigSubstitutions();
++    }
++
+     // First load the vendor specific system presets.
+     PresetsConfigSubstitutions substitutions;
+     std::string errors_cummulative;
+@@ -1623,22 +1715,13 @@ bool PresetBundle::import_json_presets(PresetsConfigSubstitutions& substitutions
+ //BBS save user preset to user_id preset folder
+ void PresetBundle::save_user_presets(AppConfig& config, std::map<std::string, std::string>& need_to_delete_list)
+ {
+-    std::string user_sub_folder = DEFAULT_USER_FOLDER_NAME;
+-    if (!config.get("preset_folder").empty())
+-        user_sub_folder = config.get("preset_folder");
+-    //BBS: change directory by design
+-    const std::string dir_user_presets = data_dir() + "/" + PRESET_USER_DIR + "/"+ user_sub_folder;
++    const boost::filesystem::path folder =
++        resolve_user_presets_root(config.get("preset_folder"));
++    ensure_user_presets_root(folder);
++    const std::string dir_user_presets = folder.string();
+ 
+     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(" enter, save to %1%")%dir_user_presets;
+ 
+-    fs::path user_folder(data_dir() + "/" + PRESET_USER_DIR);
+-    if (!fs::exists(user_folder))
+-        fs::create_directory(user_folder);
+-
+-    fs::path folder(dir_user_presets);
+-    if (!fs::exists(folder))
+-        fs::create_directory(folder);
+-
+     this->prints.save_user_presets(dir_user_presets, PRESET_PRINT_NAME, need_to_delete_list);
+     this->filaments.save_user_presets(dir_user_presets, PRESET_FILAMENT_NAME, need_to_delete_list);
+     this->printers.save_user_presets(dir_user_presets, PRESET_PRINTER_NAME, need_to_delete_list);
+@@ -1668,6 +1751,13 @@ PresetsConfigSubstitutions PresetBundle::update_subscribed_presets(
+     const BundleMetadata& remote_metadata,
+     ForwardCompatibilitySubstitutionRule substitution_rule)
+ {
++    if (has_external_user_presets_root()) {
++        BOOST_LOG_TRIVIAL(info)
++            << __FUNCTION__
++            << ": ignored subscribed preset update because an external workspace is active";
++        return PresetsConfigSubstitutions();
++    }
++
+     PresetsConfigSubstitutions substitutions;
+     std::string errors_cumulative;
+     bool process_added = false, filament_added = false, machine_added = false;
+@@ -1958,36 +2048,37 @@ bool PresetBundle::save_preset_to_bundle_dir(Preset& preset, PresetCollection* c
+ //BBS: save user preset to user_id preset folder
+ void PresetBundle::update_user_presets_directory(const std::string preset_folder)
+ {
+-    //BBS: change directory by design
+-    const std::string dir_user_presets = data_dir() + "/" + PRESET_USER_DIR + "/"+ preset_folder;
++    const boost::filesystem::path folder =
++        resolve_user_presets_root(preset_folder);
++    ensure_user_presets_root(folder);
++    const std::string dir_user_presets = folder.string();
+ 
+     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(" enter, update directory to %1%")%dir_user_presets;
+ 
+-    fs::path user_folder(data_dir() + "/" + PRESET_USER_DIR);
+-    if (!fs::exists(user_folder))
+-        fs::create_directory(user_folder);
+-
+-    fs::path folder(dir_user_presets);
+-    if (!fs::exists(folder))
+-        fs::create_directory(folder);
+-
+     this->prints.update_user_presets_directory(dir_user_presets, PRESET_PRINT_NAME);
+     this->filaments.update_user_presets_directory(dir_user_presets, PRESET_FILAMENT_NAME);
+     this->printers.update_user_presets_directory(dir_user_presets, PRESET_PRINTER_NAME);
+     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(" finished");
+ }
+ 
+ void PresetBundle::remove_user_presets_directory(const std::string preset_folder)
+ {
+-    const std::string dir_user_presets = data_dir() + "/" + PRESET_USER_DIR + "/" + preset_folder;
++    if (has_external_user_presets_root()) {
++        BOOST_LOG_TRIVIAL(info)
++            << __FUNCTION__
++            << ": ignored account-folder removal because an external workspace is active";
++        return;
++    }
+ 
+     if (preset_folder.empty()) {
+-        BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": preset_folder is empty, no need to remove directory : %1%") % dir_user_presets;
++        BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ": preset_folder is empty, no directory removed";
+         return;
+     }
+-    BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(" enter, delete directory : %1%") % dir_user_presets;
+-    fs::path folder(dir_user_presets);
+-    if (fs::exists(folder)) {
+-        fs::remove_all(folder);
+-    }
++
++    const boost::filesystem::path folder =
++        resolve_user_presets_root(preset_folder);
++    BOOST_LOG_TRIVIAL(debug)
++        << __FUNCTION__ << " enter, delete directory: " << folder.string();
++    if (boost::filesystem::exists(folder))
++        boost::filesystem::remove_all(folder);
+ }
+@@ -2127,6 +2218,13 @@ int PresetBundle::validate_presets(std::string file_name)
+ 
+ void PresetBundle::remove_users_preset(AppConfig &config, std::map<std::string, std::map<std::string, std::string>> *my_presets)
+ {
++    if (has_external_user_presets_root()) {
++        BOOST_LOG_TRIVIAL(info)
++            << __FUNCTION__
++            << ": ignored cloud-driven removals because an external workspace is active";
++        return;
++    }
++
+     auto check_removed = [my_presets, this](Preset &preset) -> bool {
+         if (my_presets == nullptr) return true;
+         if (my_presets->find(preset.name) != my_presets->end()) return false;
+diff --git a/tests/libslic3r/test_preset_bundle_loading.cpp b/tests/libslic3r/test_preset_bundle_loading.cpp
+--- a/tests/libslic3r/test_preset_bundle_loading.cpp
++++ b/tests/libslic3r/test_preset_bundle_loading.cpp
+@@ -78,7 +78,73 @@ struct RenameTestCollection : public PresetCollection
+ };
+ 
+ } // namespace
+ 
++TEST_CASE("Workspace root owns native user preset reads and writes", "[Preset][Workspace]")
++{
++    TempPresetDir temp_dir;
++    const fs::path workspace = temp_dir.path / "Orca Workspace";
++    const fs::path expected_root = workspace / "UserPresets";
++
++    AppConfig config;
++    config.set("orca_preset_assistant", "workspace", workspace.string());
++
++    PresetBundle bundle;
++    bundle.configure_user_presets_root(config);
++
++    REQUIRE(bundle.has_external_user_presets_root());
++    REQUIRE(fs::equivalent(bundle.external_user_presets_root(), expected_root));
++    CHECK(fs::is_directory(expected_root / PRESET_PRINTER_NAME));
++    CHECK(fs::is_directory(expected_root / PRESET_PRINT_NAME));
++    CHECK(fs::is_directory(expected_root / PRESET_FILAMENT_NAME));
++
++    // Account-folder switches must not change the external destination.
++    bundle.update_user_presets_directory("ignored-account-id");
++    REQUIRE(fs::equivalent(bundle.external_user_presets_root(), expected_root));
++
++    // Exercise the same PresetCollection::save_current_preset path used by the
++    // native Save preset flow and verify the resulting file stays in process/.
++    const std::string saved_name = "Workspace Resolver Test";
++    bundle.prints.save_current_preset(saved_name);
++    const Preset* saved = bundle.prints.find_preset(saved_name);
++    REQUIRE(saved != nullptr);
++    REQUIRE(fs::exists(saved->file));
++
++    const fs::path process_dir = expected_root / PRESET_PRINT_NAME;
++    const fs::path saved_parent = fs::path(saved->file).parent_path();
++    const bool saved_in_process_dir =
++        fs::equivalent(saved_parent, process_dir) ||
++        (saved_parent.filename() == "base" &&
++         fs::equivalent(saved_parent.parent_path(), process_dir));
++    CHECK(saved_in_process_dir);
++
++    // Logging out or switching cloud accounts must never delete the external root.
++    bundle.remove_user_presets_directory("ignored-account-id");
++    CHECK(fs::is_directory(expected_root));
++    CHECK(fs::exists(saved->file));
++
++    // Copying a bundle (used by validation and import paths) keeps the resolver.
++    PresetBundle copied(bundle);
++    REQUIRE(copied.has_external_user_presets_root());
++    CHECK(fs::equivalent(copied.external_user_presets_root(), expected_root));
++}
++
++TEST_CASE("Workspace root rejects relative and filesystem-root paths", "[Preset][Workspace]")
++{
++    PresetBundle bundle;
++    AppConfig config;
++
++    config.set("orca_preset_assistant", "workspace", "relative-workspace");
++    CHECK_THROWS_AS(bundle.configure_user_presets_root(config), Slic3r::RuntimeError);
++
++    TempPresetDir temp_dir;
++    const fs::path filesystem_root = temp_dir.path.root_path();
++    config.set("orca_preset_assistant", "workspace", filesystem_root.string());
++    CHECK_THROWS_AS(bundle.configure_user_presets_root(config), Slic3r::RuntimeError);
++
++    config.set("orca_preset_assistant", "workspace", (filesystem_root / "folder" / "..").string());
++    CHECK_THROWS_AS(bundle.configure_user_presets_root(config), Slic3r::RuntimeError);
++}
++
+ TEST_CASE("Preset identity is canonicalized from load path", "[Preset][Identity]")
+ {
+     TempPresetDir              temp_dir;
+diff --git a/src/slic3r/GUI/GUI_App.cpp b/src/slic3r/GUI/GUI_App.cpp
+--- a/src/slic3r/GUI/GUI_App.cpp
++++ b/src/slic3r/GUI/GUI_App.cpp
+@@ -6499,4 +6499,11 @@ bool GUI_App::maybe_migrate_user_presets_on_login()
+ {
++    if (preset_bundle && preset_bundle->has_external_user_presets_root()) {
++        BOOST_LOG_TRIVIAL(info)
++            << __FUNCTION__
++            << ": skipped OrcaCloud account migration for the external workspace";
++        return false;
++    }
++
+     namespace fs = boost::filesystem;
+ 
+     BOOST_LOG_TRIVIAL(info) << "Migrate user presets to the OrcaCloud user folder if needed.";
+@@ -7202,6 +7209,13 @@ bool GUI_App::unsubscribe_bundle(const std::string& id)
+ 
+ void GUI_App::start_sync_user_preset(bool with_progress_dlg)
+ {
++    if (preset_bundle && preset_bundle->has_external_user_presets_root()) {
++        BOOST_LOG_TRIVIAL(info)
++            << __FUNCTION__
++            << ": OrcaCloud user preset sync is disabled for the external workspace";
++        return;
++    }
++
+     if (app_config->get_stealth_mode())
+         return;
+ 

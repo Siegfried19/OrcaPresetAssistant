@@ -1,0 +1,57 @@
+diff --git a/src/slic3r/GUI/Jobs/PrintJob.cpp b/src/slic3r/GUI/Jobs/PrintJob.cpp
+--- a/src/slic3r/GUI/Jobs/PrintJob.cpp
++++ b/src/slic3r/GUI/Jobs/PrintJob.cpp
+@@ -26,6 +26,9 @@ static auto     file_is_not_exists_str      = _u8L("Print file not found; pleas
+ static auto file_over_size_str = _u8L("The print file exceeds the maximum allowable size (1GB). Please simplify the model and slice again.");
+ static auto print_canceled_str    = _u8L("Task canceled.");
+ static auto send_print_failed_str = _u8L("Failed to send the print job. Please try again.");
++static auto signed_network_error_str = _u8L(
++    "Bambu Lab authorization blocked this print request (-26). For LAN Only printing, enable Developer Mode on the "
++    "printer, reconnect it in Orca, and try again. Use Developer Mode only on a trusted local network.");
+ static auto upload_ftp_failed_str = _u8L("Failed to upload file to ftp. Please try again.");
+ 
+ static auto     desc_network_error          = _u8L("Check the current status of the Bambu Lab server by clicking on the link above.");
+@@ -657,6 +660,8 @@ void PrintJob::process(Ctl &ctl)
+             msg_text = timeout_to_upload_str;
+         } else if (result == BAMBU_NETWORK_ERR_PRINT_LP_UPLOAD_FTP_FAILED || result == BAMBU_NETWORK_ERR_PRINT_SG_UPLOAD_FTP_FAILED) {
+             msg_text = upload_ftp_failed_str;
++        } else if (result == BAMBU_NETWORK_SIGNED_ERROR) {
++            msg_text = signed_network_error_str;
+         } else if (result == BAMBU_NETWORK_ERR_CANCELED) {
+             msg_text = print_canceled_str;
+             ctl.update_status(0, msg_text);
+diff --git a/localization/i18n/OrcaSlicer.pot b/localization/i18n/OrcaSlicer.pot
+--- a/localization/i18n/OrcaSlicer.pot
++++ b/localization/i18n/OrcaSlicer.pot
+@@ -3693,6 +3693,12 @@ msgstr ""
+ msgid "Failed to send the print job. Please try again."
+ msgstr ""
+ 
++msgid ""
++"Bambu Lab authorization blocked this print request (-26). For LAN Only "
++"printing, enable Developer Mode on the printer, reconnect it in Orca, and try "
++"again. Use Developer Mode only on a trusted local network."
++msgstr ""
++
+ msgid "Failed to upload file to ftp. Please try again."
+ msgstr ""
+ 
+diff --git a/localization/i18n/zh_CN/OrcaSlicer_zh_CN.po b/localization/i18n/zh_CN/OrcaSlicer_zh_CN.po
+--- a/localization/i18n/zh_CN/OrcaSlicer_zh_CN.po
++++ b/localization/i18n/zh_CN/OrcaSlicer_zh_CN.po
+@@ -3785,6 +3785,15 @@ msgstr "打印文件超过最大允许大小（1GB），请简化模型后重新
+ msgid "Failed to send the print job. Please try again."
+ msgstr "无法发送打印任务，请重试。"
+ 
++# AI Translated
++msgid ""
++"Bambu Lab authorization blocked this print request (-26). For LAN Only "
++"printing, enable Developer Mode on the printer, reconnect it in Orca, and try "
++"again. Use Developer Mode only on a trusted local network."
++msgstr ""
++"Bambu Lab 授权阻止了此打印请求（-26）。仅局域网打印时，请在打印机上开启开发者模"
++"式，在 Orca 中重新连接后重试。开发者模式仅应在可信的本地网络中使用。"
++
+ msgid "Failed to upload file to ftp. Please try again."
+ msgstr "上传文件至FTP失败，请重试。"
+ 

@@ -1,0 +1,69 @@
+diff --git a/src/slic3r/GUI/MainFrame.cpp b/src/slic3r/GUI/MainFrame.cpp
+--- a/src/slic3r/GUI/MainFrame.cpp
++++ b/src/slic3r/GUI/MainFrame.cpp
+@@ -1358,7 +1358,12 @@ void MainFrame::init_tabpanel()
+     // Keep the assistant at the end and select it by page pointer. This avoids
+     // renumbering MainFrame::TabPosition or depending on optional pages.
+     m_preset_assistant = new PresetAssistantPanel(m_tabpanel);
+-    m_tabpanel->AddPage(m_preset_assistant, _L("Preset Assistant"), std::string("tab_presets_active"), std::string("tab_presets_active"), false);
++    m_tabpanel->AddPage(
++        m_preset_assistant,
++        PresetAssistantPanel::display_name_for_language(wxGetApp().current_language_code_safe()),
++        std::string("tab_presets_active"),
++        std::string("tab_presets_active"),
++        false);
+ 
+     if (m_plater) {
+         // load initial config
+diff --git a/src/slic3r/GUI/PresetAssistantPanel.cpp b/src/slic3r/GUI/PresetAssistantPanel.cpp
+--- a/src/slic3r/GUI/PresetAssistantPanel.cpp
++++ b/src/slic3r/GUI/PresetAssistantPanel.cpp
+@@ -139,6 +139,13 @@ wxString PresetAssistantPanel::append_language_query(
+     return url + fragment;
+ }
+ 
++wxString PresetAssistantPanel::display_name_for_language(const wxString& language)
++{
++    return language.Lower().StartsWith("zh")
++        ? wxString::FromUTF8("预设助手")
++        : wxString::FromUTF8("Preset Assistant");
++}
++
+ PresetAssistantPanel::PresetAssistantPanel(wxWindow* parent)
+     : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL),
+       m_helper_ready_timer(this)
+diff --git a/src/slic3r/GUI/PresetAssistantPanel.hpp b/src/slic3r/GUI/PresetAssistantPanel.hpp
+--- a/src/slic3r/GUI/PresetAssistantPanel.hpp
++++ b/src/slic3r/GUI/PresetAssistantPanel.hpp
+@@ -30,6 +30,7 @@ public:
+     static wxString append_language_query(
+         wxString url,
+         const wxString& language);
++    static wxString display_name_for_language(const wxString& language);
+ 
+     // Re-resolve the configured URL when the page becomes active. This lets a
+     // developer start or restart the localhost UI without restarting Orca.
+diff --git a/tests/slic3rutils/test_preset_assistant_bridge.cpp b/tests/slic3rutils/test_preset_assistant_bridge.cpp
+--- a/tests/slic3rutils/test_preset_assistant_bridge.cpp
++++ b/tests/slic3rutils/test_preset_assistant_bridge.cpp
+@@ -69,6 +69,20 @@ TEST_CASE("Preset Assistant helper language query preserves the session fragment",
+         "http://127.0.0.1:47123/?view=presets&lang=en_US");
+ }
+ 
++TEST_CASE("Preset Assistant tab name follows the Orca language",
++          "[PresetAssistant][Language]")
++{
++    using Slic3r::GUI::PresetAssistantPanel;
++    CHECK(PresetAssistantPanel::display_name_for_language("zh_CN") ==
++          wxString::FromUTF8("预设助手"));
++    CHECK(PresetAssistantPanel::display_name_for_language("zh_TW") ==
++          wxString::FromUTF8("预设助手"));
++    CHECK(PresetAssistantPanel::display_name_for_language("en_US") ==
++          wxString::FromUTF8("Preset Assistant"));
++    CHECK(PresetAssistantPanel::display_name_for_language("de_DE") ==
++          wxString::FromUTF8("Preset Assistant"));
++}
++
+ TEST_CASE("Preset Assistant rejects existing slicer preset roots as workspaces",
+           "[PresetAssistant][Workspace]")
+ {

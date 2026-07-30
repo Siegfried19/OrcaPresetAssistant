@@ -1,0 +1,204 @@
+diff --git a/src/slic3r/GUI/PresetAssistantBridge.hpp b/src/slic3r/GUI/PresetAssistantBridge.hpp
+index 835b29d..eb250e9 100644
+--- a/src/slic3r/GUI/PresetAssistantBridge.hpp
++++ b/src/slic3r/GUI/PresetAssistantBridge.hpp
+@@ -34,10 +34,12 @@ public:
+         const std::string& workspace);
+     static bool has_explicit_panel_approval(const nlohmann::json& params);
+     static bool preserves_created_preset_on_rollback(
+         const std::string& destination);
+     static bool is_preset_type_writable(const std::string& preset_type);
++    static bool is_project_read_authorization(
++        const std::string& authorization);
+     static bool is_supported_write_setting(
+         const std::string& preset_type,
+         const std::string& key);
+     static nlohmann::json write_capabilities();
+ 
+diff --git a/src/slic3r/GUI/PresetAssistantBridge.cpp b/src/slic3r/GUI/PresetAssistantBridge.cpp
+index 873cddc..a5d639d 100644
+--- a/src/slic3r/GUI/PresetAssistantBridge.cpp
++++ b/src/slic3r/GUI/PresetAssistantBridge.cpp
+@@ -746,16 +746,42 @@ json current_preset_state(PresetBundle& bundle)
+ json vec3_json(const Vec3d& value)
+ {
+     return json::array({value.x(), value.y(), value.z()});
+ }
+ 
+-json project_placement_summary(Plater& plater)
++void append_model_source_file(json& source_files,
++                              std::set<std::string>& seen,
++                              const std::string& candidate)
++{
++    if (candidate.empty())
++        return;
++    boost::system::error_code error;
++    fs::path source(candidate);
++    if (!source.is_absolute() ||
++        !fs::exists(source, error) || error ||
++        !fs::is_regular_file(source, error) || error)
++        return;
++    const std::string extension =
++        boost::algorithm::to_lower_copy(source.extension().string());
++    if (extension != ".stl" && extension != ".3mf")
++        return;
++    source = fs::canonical(source, error);
++    if (error)
++        return;
++    source.make_preferred();
++    const std::string normalized = source.string();
++    if (seen.emplace(normalized).second)
++        source_files.push_back(normalized);
++}
++
++json project_placement_summary(Plater& plater, bool include_source_paths)
+ {
+     const Model& model = plater.model();
+     PartPlateList& plates = plater.get_partplate_list();
+     json objects = json::array();
+     size_t instance_count = 0;
++    size_t source_file_count = 0;
+ 
+     for (size_t object_index = 0; object_index < model.objects.size(); ++object_index) {
+         const ModelObject* object = model.objects[object_index];
+         if (object == nullptr)
+             continue;
+@@ -787,29 +813,43 @@ json project_placement_summary(Plater& plater)
+                     instance->print_volume_state == ModelInstancePVS_Inside},
+             });
+             ++instance_count;
+         }
+ 
++        json source_files = json::array();
++        if (include_source_paths) {
++            std::set<std::string> seen;
++            append_model_source_file(source_files, seen, object->input_file);
++            for (const ModelVolume* volume : object->volumes)
++                if (volume != nullptr)
++                    append_model_source_file(
++                        source_files, seen, volume->source.input_file);
++        }
++        source_file_count += source_files.size();
++
+         objects.push_back({
+             {"objectIndex", object_index},
+             {"name", object->name},
+             {"printable", object->printable},
+             {"instances", std::move(instances)},
++            {"sourceFiles", std::move(source_files)},
+         });
+     }
+ 
+     return {
+         {"objectCount", objects.size()},
+         {"instanceCount", instance_count},
++        {"sourceFileCount", source_file_count},
+         {"objects", std::move(objects)},
+         {"units", {
+             {"offset", "millimeter"},
+             {"rotation", "radian"},
+             {"scale", "factor"},
+         }},
+         {"meshIncluded", false},
+-        {"sourcePathsIncluded", false},
++        {"sourcePathsIncluded", include_source_paths},
++        {"geometryAccessIncluded", include_source_paths},
+     };
+ }
+ 
+ } // namespace
+ 
+@@ -868,10 +908,18 @@ bool PresetAssistantBridge::is_preset_type_writable(
+     const std::string& preset_type)
+ {
+     return preset_type == "process" || preset_type == "filament";
+ }
+ 
++bool PresetAssistantBridge::is_project_read_authorization(
++    const std::string& authorization)
++{
++    return authorization == "project:summary" ||
++           authorization == "project:placement" ||
++           authorization == "project:geometry";
++}
++
+ bool PresetAssistantBridge::is_supported_write_setting(
+     const std::string& preset_type,
+     const std::string& key)
+ {
+     return find_write_rule(preset_type, key) != nullptr;
+@@ -1057,26 +1105,28 @@ json PresetAssistantBridge::settings_get(const json& params)
+ 
+ json PresetAssistantBridge::project_get(const json& params)
+ {
+     reject_unknown_keys(params, {"authorization"}, "project.get params");
+     const std::string authorization = require_string(params, "authorization");
+-    if (authorization != "project:summary" &&
+-        authorization != "project:placement")
++    if (!is_project_read_authorization(authorization))
+         throw BridgeError("CONSENT_REQUIRED",
+-                          "project.get requires project:summary or project:placement authorization");
++                          "project.get requires an explicit project read authorization");
+ 
+     Plater& plater = require_plater();
+     json result = {
+         {"authorization", authorization},
+         {"projectDirty", plater.is_project_dirty()},
+         {"presetsDirty", plater.is_presets_dirty()},
+         {"hasLoadedObjects", !plater.model().objects.empty()},
+         {"meshIncluded", false},
+-        {"sourcePathsIncluded", false},
++        {"sourcePathsIncluded", authorization == "project:geometry"},
++        {"geometryAccessIncluded", authorization == "project:geometry"},
+     };
+-    if (authorization == "project:placement") {
+-        result["placement"] = project_placement_summary(plater);
++    if (authorization == "project:placement" ||
++        authorization == "project:geometry") {
++        result["placement"] = project_placement_summary(
++            plater, authorization == "project:geometry");
+         result["objectCountIncluded"] = true;
+         result["placementIncluded"] = true;
+     } else {
+         result["objectCountIncluded"] = false;
+         result["placementIncluded"] = false;
+diff --git a/resources/web/orca_preset_assistant/bridge.js b/resources/web/orca_preset_assistant/bridge.js
+index 5eb7a6a..2576ce2 100644
+--- a/resources/web/orca_preset_assistant/bridge.js
++++ b/resources/web/orca_preset_assistant/bridge.js
+@@ -108,10 +108,12 @@
+       request("settings.get", { authorization: "settings:read" }),
+     project: () =>
+       request("project.get", { authorization: "project:summary" }),
+     projectPlacement: () =>
+       request("project.get", { authorization: "project:placement" }),
++    projectGeometry: () =>
++      request("project.get", { authorization: "project:geometry" }),
+     exportProjectCopy: (destinationPath) =>
+       request("project.export-copy", {
+         authorization: "project:export-copy",
+         destinationPath,
+       }),
+diff --git a/tests/slic3rutils/test_preset_assistant_bridge.cpp b/tests/slic3rutils/test_preset_assistant_bridge.cpp
+index f91dcc4..cfc6064 100644
+--- a/tests/slic3rutils/test_preset_assistant_bridge.cpp
++++ b/tests/slic3rutils/test_preset_assistant_bridge.cpp
+@@ -280,5 +280,18 @@ TEST_CASE("Preset Assistant exposes only the controlled preset write surface",
+     CHECK(layer_rule["minimum"] == 0.04);
+     CHECK(layer_rule["maximum"].is_null());
+     CHECK(layer_rule["dynamicMaximum"] ==
+           "80-percent-of-smallest-active-nozzle");
+ }
++
++TEST_CASE("Preset Assistant distinguishes placement from current-project geometry access",
++          "[PresetAssistant][Bridge]")
++{
++    CHECK(PresetAssistantBridge::is_project_read_authorization(
++        "project:summary"));
++    CHECK(PresetAssistantBridge::is_project_read_authorization(
++        "project:placement"));
++    CHECK(PresetAssistantBridge::is_project_read_authorization(
++        "project:geometry"));
++    CHECK_FALSE(PresetAssistantBridge::is_project_read_authorization(
++        "project:filesystem"));
++}

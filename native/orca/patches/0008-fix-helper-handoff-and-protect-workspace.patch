@@ -1,0 +1,172 @@
+diff --git a/src/slic3r/GUI/PresetAssistantBridge.cpp b/src/slic3r/GUI/PresetAssistantBridge.cpp
+index dcc85f87b..277387616 100644
+--- a/src/slic3r/GUI/PresetAssistantBridge.cpp
++++ b/src/slic3r/GUI/PresetAssistantBridge.cpp
+@@ -628,6 +628,29 @@ fs::path normalized_workspace_path(const std::string& raw)
+     return path;
+ }
+ 
++bool workspace_destination_is_safe(const fs::path& workspace)
++{
++    boost::system::error_code ec;
++    const fs::file_status status = fs::symlink_status(workspace, ec);
++    if (ec || !fs::exists(status) || !fs::is_directory(status) ||
++        fs::is_symlink(status))
++        return false;
++
++    size_t direct_preset_directories = 0;
++    static constexpr std::array<const char*, 3> names{
++        "machine", "process", "filament"};
++    for (const char* name : names) {
++        ec.clear();
++        const fs::file_status child_status =
++            fs::symlink_status(workspace / name, ec);
++        if (!ec && fs::exists(child_status) &&
++            fs::is_directory(child_status) &&
++            !fs::is_symlink(child_status))
++            ++direct_preset_directories;
++    }
++    return direct_preset_directories < 2;
++}
++
+ std::string normalized_path_for_compare(const fs::path& value)
+ {
+     std::string result = fs::absolute(value).lexically_normal().make_preferred().string();
+@@ -823,6 +845,17 @@ bool PresetAssistantBridge::is_trusted_source(
+     return !trusted_file.empty() && candidate_file == trusted_file;
+ }
+ 
++bool PresetAssistantBridge::is_workspace_destination_allowed(
++    const std::string& workspace)
++{
++    try {
++        return workspace_destination_is_safe(
++            normalized_workspace_path(workspace));
++    } catch (const BridgeError&) {
++        return false;
++    }
++}
++
+ bool PresetAssistantBridge::preserves_created_preset_on_rollback(
+     const std::string& destination)
+ {
+@@ -1157,6 +1189,11 @@ json PresetAssistantBridge::workspace_set(const json& params)
+     const fs::path workspace =
+         normalized_workspace_path(require_string(params, "workspace"));
+ 
++    if (!workspace_destination_is_safe(workspace))
++        throw BridgeError(
++            "UNSAFE_WORKSPACE_ROOT",
++            "Choose a dedicated empty folder, not an existing Orca/Bambu preset root");
++
+     const std::string old_value =
+         app_config.get(CONFIG_SECTION, CONFIG_WORKSPACE_KEY);
+     const std::string new_value = workspace.string();
+diff --git a/src/slic3r/GUI/PresetAssistantBridge.hpp b/src/slic3r/GUI/PresetAssistantBridge.hpp
+index e8e24d711..676d5576a 100644
+--- a/src/slic3r/GUI/PresetAssistantBridge.hpp
++++ b/src/slic3r/GUI/PresetAssistantBridge.hpp
+@@ -29,6 +29,8 @@ public:
+ 
+     static bool is_trusted_source(const std::string& candidate_url,
+                                   const std::string& trusted_page_url);
++    static bool is_workspace_destination_allowed(
++        const std::string& workspace);
+     static bool has_explicit_panel_approval(const nlohmann::json& params);
+     static bool preserves_created_preset_on_rollback(
+         const std::string& destination);
+diff --git a/src/slic3r/GUI/PresetAssistantPanel.cpp b/src/slic3r/GUI/PresetAssistantPanel.cpp
+index 2150bec4d..80c05b98c 100644
+--- a/src/slic3r/GUI/PresetAssistantPanel.cpp
++++ b/src/slic3r/GUI/PresetAssistantPanel.cpp
+@@ -167,10 +167,10 @@ PresetAssistantPanel::PresetAssistantPanel(wxWindow* parent)
+     m_browser->Bind(wxEVT_WEBVIEW_NAVIGATING, &PresetAssistantPanel::on_navigating, this);
+     m_browser->Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &PresetAssistantPanel::on_script_message, this);
+     m_browser->Bind(EVT_WEBVIEW_RECREATED, &PresetAssistantPanel::on_webview_recreated, this);
+-    m_helper_ready_timer.Bind(
++    Bind(
+         wxEVT_TIMER,
+         &PresetAssistantPanel::on_helper_ready_timer,
+-        this);
++        this);
+ 
+     start_helper();
+     reload();
+@@ -323,7 +323,14 @@ void PresetAssistantPanel::start_helper()
+     m_helper_pid = pid;
+     m_helper_process = std::move(process);
+     m_helper_ready_attempts = 0;
+-    m_helper_ready_timer.Start(100);
++    if (!m_helper_ready_timer.Start(100)) {
++        BOOST_LOG_TRIVIAL(error)
++            << "PresetAssistantPanel: failed to start helper readiness timer";
++        stop_helper();
++        return;
++    }
++    BOOST_LOG_TRIVIAL(info)
++        << "PresetAssistantPanel: helper readiness timer started";
+ #endif
+ }
+ 
+@@ -358,6 +365,9 @@ void PresetAssistantPanel::stop_helper()
+ 
+ void PresetAssistantPanel::on_helper_ready_timer(wxTimerEvent& event)
+ {
++    if (m_helper_ready_attempts == 0)
++        BOOST_LOG_TRIVIAL(info)
++            << "PresetAssistantPanel: helper readiness timer fired";
+     event.Skip();
+     if (m_helper_pid <= 0 || m_helper_state_path.empty()) {
+         m_helper_ready_timer.Stop();
+@@ -379,6 +389,7 @@ void PresetAssistantPanel::on_helper_ready_timer(wxTimerEvent& event)
+         return;
+     std::ostringstream buffer;
+     buffer << stream.rdbuf();
++    stream.close();
+     const nlohmann::json state =
+         nlohmann::json::parse(buffer.str(), nullptr, false);
+     if (state.is_discarded() || !state.is_object())
+diff --git a/tests/slic3rutils/test_preset_assistant_bridge.cpp b/tests/slic3rutils/test_preset_assistant_bridge.cpp
+index fd2f2252a..048780b4f 100644
+--- a/tests/slic3rutils/test_preset_assistant_bridge.cpp
++++ b/tests/slic3rutils/test_preset_assistant_bridge.cpp
+@@ -2,6 +2,8 @@
+ 
+ #include <nlohmann/json.hpp>
+ 
++#include <boost/filesystem.hpp>
++
+ #include "slic3r/GUI/PresetAssistantBridge.hpp"
+ #include "slic3r/GUI/PresetAssistantPanel.hpp"
+ 
+@@ -64,6 +66,30 @@ TEST_CASE("Preset Assistant helper language query preserves the session fragment",
+         "http://127.0.0.1:47123/?view=presets&lang=en_US");
+ }
+ 
++TEST_CASE("Preset Assistant rejects existing slicer preset roots as workspaces",
++          "[PresetAssistant][Workspace]")
++{
++    namespace fs = boost::filesystem;
++    const fs::path test_root =
++        fs::temp_directory_path() /
++        fs::unique_path("orca-assistant-%%%%-%%%%");
++    const fs::path slicer_root = test_root / "slicer-user";
++    const fs::path dedicated_root = test_root / "dedicated";
++
++    REQUIRE(fs::create_directories(slicer_root / "process"));
++    REQUIRE(fs::create_directories(slicer_root / "filament"));
++    REQUIRE(fs::create_directories(dedicated_root));
++
++    CHECK_FALSE(PresetAssistantBridge::is_workspace_destination_allowed(
++        slicer_root.string()));
++    CHECK(PresetAssistantBridge::is_workspace_destination_allowed(
++        dedicated_root.string()));
++
++    boost::system::error_code ec;
++    fs::remove_all(test_root, ec);
++    CHECK_FALSE(ec);
++}
++
+ TEST_CASE("Preset Assistant bridge rejects malformed messages before runtime access",
+           "[PresetAssistant][Bridge]")
+ {

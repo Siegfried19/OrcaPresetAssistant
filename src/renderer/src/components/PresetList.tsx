@@ -3,8 +3,8 @@ import { ChevronRight, SearchX } from 'lucide-react'
 import type { PresetView } from '@shared/contracts'
 
 import { useI18n } from '../i18n/I18nProvider'
-import { formatDate, formatGitSummary } from '../lib/format'
-import { GitBadge, KindBadge, ResultBadge } from './Badges'
+import { formatDate } from '../lib/format'
+import { KindBadge, OriginBadge, ResultBadge } from './Badges'
 
 interface PresetListProps {
   readonly presets: readonly PresetView[]
@@ -30,7 +30,7 @@ export function PresetList({ presets, selectedId, onSelect }: PresetListProps): 
     <div className="preset-list" role="listbox" aria-label={t('list.label')}>
       <div className="list-columns" aria-hidden="true">
         <span>{t('list.preset')}</span>
-        <span>{t('list.git')}</span>
+        <span>{t('list.typeAndParent')}</span>
         <span>{t('list.latestPrint')}</span>
         <span />
       </div>
@@ -44,19 +44,19 @@ export function PresetList({ presets, selectedId, onSelect }: PresetListProps): 
           type="button"
         >
           <span className="preset-primary">
-            <KindBadge iconOnly kind={preset.kind} />
             <span className="preset-copy">
               <strong>{preset.name}</strong>
-              <small>
-                {preset.inherits
-                  ? t('list.inherits', { name: preset.inherits })
-                  : preset.relativePath}
-              </small>
+              <small>{preset.relativePath}</small>
             </span>
           </span>
-          <span className="preset-git">
-            <GitBadge state={preset.gitState} />
-            <small>{formatGitSummary(preset, t)}</small>
+          <span className="preset-meta">
+            <span className="preset-meta-badges">
+              <KindBadge kind={preset.kind} />
+              <OriginBadge origin={preset.origin} />
+            </span>
+            <small>
+              {preset.inherits ? t('list.inherits', { name: preset.inherits }) : t('list.noParent')}
+            </small>
           </span>
           <span className="preset-print">
             {preset.latestPrint ? (

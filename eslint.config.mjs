@@ -5,12 +5,17 @@ import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
   {
-    ignores: ['node_modules/**', 'out/**', 'release/**', 'coverage/**'],
+    ignores: ['node_modules/**', 'out/**', 'release/**', 'FullVersion/**', 'coverage/**'],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ['src/main/**/*.ts', 'src/preload/**/*.ts', 'electron.vite.config.ts'],
+    files: [
+      'src/main/**/*.ts',
+      'src/preload/**/*.ts',
+      'plugins/**/*.mjs',
+      'electron.vite.config.ts',
+    ],
     languageOptions: {
       globals: globals.node,
     },

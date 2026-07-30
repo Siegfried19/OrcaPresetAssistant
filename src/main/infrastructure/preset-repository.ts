@@ -64,7 +64,7 @@ async function scanFile(
 
   const validationIssues = [
     ...(parseIssue ? [parseIssue] : []),
-    ...validatePresetIdentity(kind, filenameStem, data, hasInfoFile),
+    ...validatePresetIdentity(kind, filenameStem, data),
   ]
   const fileStat = await stat(filePath)
 
@@ -82,6 +82,7 @@ async function scanFile(
     modifiedAt: fileStat.mtime.toISOString(),
     data,
     validationIssues,
+    isSystem: false,
     gitState: 'unknown',
     diffStats: null,
     latestPrint: null,
