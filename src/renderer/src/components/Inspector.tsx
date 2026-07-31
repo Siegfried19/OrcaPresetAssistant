@@ -3,6 +3,7 @@ import {
   BadgeInfo,
   CheckCircle2,
   FileJson2,
+  GitCompareArrows,
   History,
   Link2,
   MousePointer2,
@@ -17,8 +18,8 @@ import type {
 
 import { useI18n } from '../i18n/I18nProvider'
 import { materialRoleTranslationKey, validationTranslationKey } from '../i18n/messages'
-import { formatDate } from '../lib/format'
-import { KindBadge, OriginBadge, ResultBadge } from './Badges'
+import { formatDate, formatGitSummary } from '../lib/format'
+import { GitBadge, KindBadge, OriginBadge, ResultBadge } from './Badges'
 import { ChangeProposalCard } from './ChangeProposalCard'
 
 interface InspectorProps {
@@ -27,6 +28,7 @@ interface InspectorProps {
   readonly proposalTargetName: string | null
   readonly onClose: () => void
   readonly onRecord: () => void
+  readonly onShowDiff: (presetId: string) => void
   readonly onApproveProposal: (request: ApproveChangeProposalRequest) => Promise<void>
   readonly onRejectProposal: (id: string) => Promise<void>
   readonly onRollbackProposal: (id: string) => Promise<void>
@@ -38,6 +40,7 @@ export function Inspector({
   proposalTargetName,
   onClose,
   onRecord,
+  onShowDiff,
   onApproveProposal,
   onRejectProposal,
   onRollbackProposal,
@@ -69,6 +72,7 @@ export function Inspector({
         <div className="inspector-badges">
           <KindBadge kind={preset.kind} />
           <OriginBadge origin={preset.origin} />
+          <GitBadge state={preset.gitState} />
         </div>
         <h2>{preset.name}</h2>
         <p>{preset.relativePath}</p>
@@ -113,6 +117,24 @@ export function Inspector({
               <dd>{formatDate(preset.modifiedAt, language, t)}</dd>
             </div>
           </dl>
+        </section>
+
+        <section className="detail-section">
+          <div className="section-heading">
+            <h3>{t('inspector.version')}</h3>
+            <GitBadge state={preset.gitState} />
+          </div>
+          <p className="version-summary">{formatGitSummary(preset, t)}</p>
+          {preset.gitState !== 'clean' && preset.gitState !== 'unknown' && (
+            <button
+              className="secondary-button compact"
+              onClick={() => onShowDiff(preset.id)}
+              type="button"
+            >
+              <GitCompareArrows aria-hidden="true" size={15} />
+              {t('action.viewChanges')}
+            </button>
+          )}
         </section>
 
         <ChangeProposalCard

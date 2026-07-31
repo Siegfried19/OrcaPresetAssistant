@@ -1,6 +1,6 @@
 {
   "name": "orca-preset-assistant",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "packageManager": "pnpm@11.9.0",
   "description": "An OrcaSlicer workspace for user presets, controlled Codex changes, and reproducible print history.",
@@ -15,7 +15,8 @@
     "format:check": "prettier --check .",
     "test": "vitest run --configLoader runner",
     "quality": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test",
-    "package:win": "pnpm quality && electron-vite build && electron-builder --win portable"
+    "package:win": "pnpm quality && electron-vite build && electron-builder --win portable",
+    "package:plugin": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-codex-plugin.ps1"
   },
   "dependencies": {
     "lucide-react": "1.27.0",

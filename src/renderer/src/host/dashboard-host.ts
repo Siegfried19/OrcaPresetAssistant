@@ -531,6 +531,26 @@ class OrcaDashboardApi implements DashboardApi {
     return this.helper.getPresetDiff(presetId)
   }
 
+  public async initializePresetGit(): Promise<DashboardSnapshot> {
+    return this.track(await this.helper.initializePresetGit())
+  }
+
+  public async savePresetVersion(
+    request: Parameters<DashboardApi['savePresetVersion']>[0],
+  ): Promise<DashboardSnapshot> {
+    return this.track(await this.helper.savePresetVersion(request))
+  }
+
+  public listPresetVersions() {
+    return this.helper.listPresetVersions()
+  }
+
+  public async restorePresetVersion(
+    request: Parameters<DashboardApi['restorePresetVersion']>[0],
+  ): Promise<DashboardSnapshot> {
+    return this.track(await this.helper.restorePresetVersion(request))
+  }
+
   public openRoot(): Promise<void> {
     return this.helper.openRoot()
   }
@@ -568,6 +588,10 @@ function unavailableDashboard(error: unknown): DashboardApi {
     rollbackChangeProposal: reject,
     guardProposalRollback: reject,
     getPresetDiff: reject,
+    initializePresetGit: reject,
+    savePresetVersion: reject,
+    listPresetVersions: reject,
+    restorePresetVersion: reject,
     openRoot: reject,
     launchOrca: reject,
     onSnapshotChanged: () => () => undefined,

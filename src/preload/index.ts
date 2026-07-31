@@ -10,6 +10,8 @@ import {
   type Language,
   type QueueChangeProposalRequest,
   type RecordPrintRequest,
+  type RestorePresetVersionRequest,
+  type SavePresetVersionRequest,
   type UpdatePrintHistoryRequest,
   type UpdateSettingsRequest,
 } from '@shared/contracts'
@@ -45,6 +47,12 @@ const api: DashboardApi = {
   guardProposalRollback: (request: GuardProposalRollbackRequest) =>
     ipcRenderer.invoke(IPC_CHANNELS.guardProposalRollback, request),
   getPresetDiff: (presetId: string) => ipcRenderer.invoke(IPC_CHANNELS.getPresetDiff, presetId),
+  initializePresetGit: () => ipcRenderer.invoke(IPC_CHANNELS.initializePresetGit),
+  savePresetVersion: (request: SavePresetVersionRequest) =>
+    ipcRenderer.invoke(IPC_CHANNELS.savePresetVersion, request),
+  listPresetVersions: () => ipcRenderer.invoke(IPC_CHANNELS.listPresetVersions),
+  restorePresetVersion: (request: RestorePresetVersionRequest) =>
+    ipcRenderer.invoke(IPC_CHANNELS.restorePresetVersion, request),
   openRoot: () => ipcRenderer.invoke(IPC_CHANNELS.openRoot),
   launchOrca: () => ipcRenderer.invoke(IPC_CHANNELS.launchOrca),
   onSnapshotChanged: (callback: (snapshot: DashboardSnapshot) => void) => {

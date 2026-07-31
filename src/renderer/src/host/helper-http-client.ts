@@ -155,6 +155,10 @@ export function createHelperDashboardApi(client: HelperHttpClient): DashboardApi
     rollbackChangeProposal: () => Promise.reject(new Error('orca-unavailable')),
     guardProposalRollback: (request) => client.request('guardProposalRollback', request),
     getPresetDiff: (presetId) => client.request('getPresetDiff', { presetId }),
+    initializePresetGit: () => client.request('initializePresetGit', {}),
+    savePresetVersion: (request) => client.request('savePresetVersion', request),
+    listPresetVersions: () => client.request('listPresetVersions', {}),
+    restorePresetVersion: (request) => client.request('restorePresetVersion', request),
     openRoot: async () => {
       await client.request('openRoot', {})
     },

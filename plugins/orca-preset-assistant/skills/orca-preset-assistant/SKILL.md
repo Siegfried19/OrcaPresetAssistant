@@ -38,3 +38,14 @@ Machine presets are read-only. Only queue process or filament keys listed by the
 - Preserve failed prints and rolled-back changes as evidence.
 - `current-project` is session-only and includes only model sources reported by the open Orca project.
 - Do not expose account tokens, printer access codes, unrelated recent files, or ungranted project-external paths.
+
+## Local preset versions
+
+The panel's version controls apply only to `<Workspace>/UserPresets/machine`, `process`, and `filament`.
+They deliberately exclude `PrintHistory`, `AGENTS.md`, `CHANGELOG.md`, and other AI notes.
+
+- Treat only a Git repository whose top-level directory is exactly `UserPresets` as the preset repository. Never borrow a parent repository.
+- If no independent preset repository exists, explain the local-only scope and obtain explicit user approval before initializing it. The panel's **Enable Local Versions** action is the preferred route.
+- Use the panel's **Save Version** and **Version History** actions for normal snapshots and restores. A restore creates a new commit; it does not rewrite history or detach HEAD.
+- Never initialize, stage, commit, restore, or change remotes from Codex unless the user explicitly asks. The panel does not push, pull, create branches, or configure a remote.
+- When Codex is asked to work directly in `UserPresets`, inspect the repository status first, preserve pre-existing changes, and keep preset edits separate from AI-only documentation.

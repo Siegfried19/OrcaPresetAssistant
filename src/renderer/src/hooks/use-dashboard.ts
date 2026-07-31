@@ -5,6 +5,8 @@ import type {
   ChangeProposalView,
   CodexPermissionScope,
   DashboardSnapshot,
+  PresetDiff,
+  PresetVersionView,
   RecordPrintRequest,
   UpdatePrintHistoryRequest,
   UpdateSettingsRequest,
@@ -31,6 +33,11 @@ interface DashboardController {
   updatePrintHistory(request: UpdatePrintHistoryRequest): Promise<void>
   openPrintHistoryRecord(id: string): Promise<void>
   deletePrintHistory(id: string): Promise<void>
+  getPresetDiff(presetId: string): Promise<PresetDiff>
+  initializePresetGit(): Promise<void>
+  savePresetVersion(message: string): Promise<void>
+  listPresetVersions(): Promise<readonly PresetVersionView[]>
+  restorePresetVersion(revision: string): Promise<void>
   approveChangeProposal(request: ApproveChangeProposalRequest): Promise<ChangeProposalView>
   rejectChangeProposal(id: string): Promise<ChangeProposalView>
   rollbackChangeProposal(id: string): Promise<ChangeProposalView>
@@ -132,6 +139,37 @@ export function useDashboard(): DashboardController {
     [api, perform],
   )
 
+  const getPresetDiff = useCallback(
+    (presetId: string) => perform(() => api.getPresetDiff(presetId)),
+    [api, perform],
+  )
+
+  const initializePresetGit = useCallback(async () => {
+    const next = await perform(() => api.initializePresetGit())
+    setSnapshot(next)
+  }, [api, perform])
+
+  const savePresetVersion = useCallback(
+    async (message: string) => {
+      const next = await perform(() => api.savePresetVersion({ message }))
+      setSnapshot(next)
+    },
+    [api, perform],
+  )
+
+  const listPresetVersions = useCallback(
+    () => perform(() => api.listPresetVersions()),
+    [api, perform],
+  )
+
+  const restorePresetVersion = useCallback(
+    async (revision: string) => {
+      const next = await perform(() => api.restorePresetVersion({ revision }))
+      setSnapshot(next)
+    },
+    [api, perform],
+  )
+
   const approveChangeProposal = useCallback(
     async (request: ApproveChangeProposalRequest) => {
       const proposal = await perform(() => api.approveChangeProposal(request))
@@ -203,6 +241,11 @@ export function useDashboard(): DashboardController {
     updatePrintHistory,
     openPrintHistoryRecord,
     deletePrintHistory,
+    getPresetDiff,
+    initializePresetGit,
+    savePresetVersion,
+    listPresetVersions,
+    restorePresetVersion,
     approveChangeProposal,
     rejectChangeProposal,
     rollbackChangeProposal,

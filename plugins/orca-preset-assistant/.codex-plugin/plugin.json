@@ -1,6 +1,6 @@
 {
   "name": "orca-preset-assistant",
-  "version": "0.1.0+codex.20260730193432",
+  "version": "0.1.0+codex.20260731053639",
   "description": "Permission-aware access to Orca presets, live settings, current-project geometry, and print evidence.",
   "author": {
     "name": "Bowen"

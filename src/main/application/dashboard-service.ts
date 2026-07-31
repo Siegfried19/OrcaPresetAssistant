@@ -14,11 +14,14 @@ import type {
   GuardProposalRollbackRequest,
   MaterialRole,
   PresetDiff,
+  PresetVersionView,
   PresetView,
   QueueChangeProposalRequest,
   RecordPrintRequest,
+  RestorePresetVersionRequest,
   RollbackGuardResult,
   RootSource,
+  SavePresetVersionRequest,
   UpdatePrintHistoryRequest,
   UpdateSettingsRequest,
 } from '@shared/contracts'
@@ -40,7 +43,15 @@ import {
   ensureWorkspaceRoot,
   workspacePaths,
 } from '../infrastructure/discovery'
-import { applyGitState, readGitSnapshot, readPresetDiff } from '../infrastructure/git-service'
+import {
+  applyGitState,
+  initializePresetRepository,
+  readGitSnapshot,
+  readPresetDiff,
+  readPresetVersions,
+  restorePresetVersion,
+  savePresetVersion,
+} from '../infrastructure/git-service'
 import { findOrcaExecutable, launchDetached } from '../infrastructure/orca-service'
 import { NativeStateStore } from '../infrastructure/native-state-store'
 import { scanPresets } from '../infrastructure/preset-repository'
@@ -413,6 +424,41 @@ export class DashboardService {
     return readPresetDiff(preset)
   }
 
+  public async initializePresetGit(): Promise<DashboardSnapshot> {
+    if (!this.root) throw appError('workspace-not-connected')
+    await initializePresetRepository(workspacePaths(this.root.path).userPresets)
+    return (await this.refresh()).snapshot
+  }
+
+  public async savePresetVersion(request: SavePresetVersionRequest): Promise<DashboardSnapshot> {
+    if (!this.root) throw appError('workspace-not-connected')
+    if (!request || typeof request.message !== 'string') {
+      throw appError('invalid-version-message')
+    }
+    await savePresetVersion(workspacePaths(this.root.path).userPresets, request.message)
+    return (await this.refresh()).snapshot
+  }
+
+  public async listPresetVersions(): Promise<readonly PresetVersionView[]> {
+    if (!this.root) throw appError('workspace-not-connected')
+    const userPresetsPath = workspacePaths(this.root.path).userPresets
+    if (!(await readGitSnapshot(userPresetsPath)).isRepository) {
+      throw appError('git-unavailable')
+    }
+    return readPresetVersions(userPresetsPath)
+  }
+
+  public async restorePresetVersion(
+    request: RestorePresetVersionRequest,
+  ): Promise<DashboardSnapshot> {
+    if (!this.root) throw appError('workspace-not-connected')
+    if (!request || typeof request.revision !== 'string') {
+      throw appError('git-history-not-found')
+    }
+    await restorePresetVersion(workspacePaths(this.root.path).userPresets, request.revision)
+    return (await this.refresh()).snapshot
+  }
+
   public async openRoot(): Promise<void> {
     if (!this.root) throw appError('workspace-not-connected')
     const message = await shell.openPath(this.root.path)
@@ -473,6 +519,7 @@ export class DashboardService {
         printHistoryPath: paths.printHistory,
         source: this.root.source,
         isGitRepository: gitSnapshot.isRepository,
+        latestPresetVersion: gitSnapshot.latestVersion,
         orcaExecutable,
       },
       stats: {
@@ -505,6 +552,7 @@ export class DashboardService {
         printHistoryPath: '',
         source: 'automatic',
         isGitRepository: false,
+        latestPresetVersion: null,
         orcaExecutable: null,
       },
       stats: {

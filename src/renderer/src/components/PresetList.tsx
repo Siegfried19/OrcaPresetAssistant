@@ -4,7 +4,7 @@ import type { PresetView } from '@shared/contracts'
 
 import { useI18n } from '../i18n/I18nProvider'
 import { formatDate } from '../lib/format'
-import { KindBadge, OriginBadge, ResultBadge } from './Badges'
+import { GitBadge, KindBadge, OriginBadge, ResultBadge } from './Badges'
 
 interface PresetListProps {
   readonly presets: readonly PresetView[]
@@ -53,6 +53,7 @@ export function PresetList({ presets, selectedId, onSelect }: PresetListProps): 
             <span className="preset-meta-badges">
               <KindBadge kind={preset.kind} />
               <OriginBadge origin={preset.origin} />
+              <GitBadge state={preset.gitState} />
             </span>
             <small>
               {preset.inherits ? t('list.inherits', { name: preset.inherits }) : t('list.noParent')}

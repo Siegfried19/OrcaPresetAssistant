@@ -17,6 +17,10 @@ export const IPC_CHANNELS = {
   rejectChangeProposal: 'dashboard:reject-change-proposal',
   guardProposalRollback: 'dashboard:guard-proposal-rollback',
   getPresetDiff: 'dashboard:get-preset-diff',
+  initializePresetGit: 'dashboard:initialize-preset-git',
+  savePresetVersion: 'dashboard:save-preset-version',
+  listPresetVersions: 'dashboard:list-preset-versions',
+  restorePresetVersion: 'dashboard:restore-preset-version',
   openRoot: 'dashboard:open-root',
   launchOrca: 'dashboard:launch-orca',
   snapshotChanged: 'dashboard:snapshot-changed',
@@ -76,6 +80,12 @@ export type AppErrorCode =
   | 'invalid-authoritative-receipt'
   | 'workspace-mismatch'
   | 'orca-restart-required'
+  | 'git-unavailable'
+  | 'git-operation-failed'
+  | 'git-nothing-to-save'
+  | 'git-working-tree-dirty'
+  | 'git-history-not-found'
+  | 'invalid-version-message'
 
 export interface DiffStats {
   readonly added: number
@@ -127,7 +137,23 @@ export interface RootView {
   readonly printHistoryPath: string
   readonly source: RootSource
   readonly isGitRepository: boolean
+  readonly latestPresetVersion: PresetVersionView | null
   readonly orcaExecutable: string | null
+}
+
+export interface PresetVersionView {
+  readonly revision: string
+  readonly shortRevision: string
+  readonly createdAt: string
+  readonly message: string
+}
+
+export interface SavePresetVersionRequest {
+  readonly message: string
+}
+
+export interface RestorePresetVersionRequest {
+  readonly revision: string
 }
 
 export interface PrintHistoryPresetView {
@@ -307,6 +333,10 @@ export interface DashboardApi {
   rollbackChangeProposal(id: string): Promise<ChangeProposalView>
   guardProposalRollback(request: GuardProposalRollbackRequest): Promise<RollbackGuardResult>
   getPresetDiff(presetId: string): Promise<PresetDiff>
+  initializePresetGit(): Promise<DashboardSnapshot>
+  savePresetVersion(request: SavePresetVersionRequest): Promise<DashboardSnapshot>
+  listPresetVersions(): Promise<readonly PresetVersionView[]>
+  restorePresetVersion(request: RestorePresetVersionRequest): Promise<DashboardSnapshot>
   openRoot(): Promise<void>
   launchOrca(): Promise<void>
   onSnapshotChanged(callback: (snapshot: DashboardSnapshot) => void): () => void

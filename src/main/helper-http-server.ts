@@ -240,6 +240,16 @@ async function invokeRoute(
       const value = objectBody(body, ['presetId'])
       return service.getPresetDiff(value.presetId as string)
     }
+    case HELPER_HTTP_ROUTES.initializePresetGit:
+      objectBody(body, [])
+      return service.initializePresetGit()
+    case HELPER_HTTP_ROUTES.savePresetVersion:
+      return service.savePresetVersion(objectBody(body, ['message']) as never)
+    case HELPER_HTTP_ROUTES.listPresetVersions:
+      objectBody(body, [])
+      return service.listPresetVersions()
+    case HELPER_HTTP_ROUTES.restorePresetVersion:
+      return service.restorePresetVersion(objectBody(body, ['revision']) as never)
     case HELPER_HTTP_ROUTES.openRoot:
       objectBody(body, [])
       await service.openRoot()

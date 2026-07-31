@@ -9,6 +9,8 @@ import {
   type Language,
   type QueueChangeProposalRequest,
   type RecordPrintRequest,
+  type RestorePresetVersionRequest,
+  type SavePresetVersionRequest,
   type UpdatePrintHistoryRequest,
   type UpdateSettingsRequest,
 } from '@shared/contracts'
@@ -155,6 +157,32 @@ export function registerIpcHandlers(window: BrowserWindow, service: DashboardSer
     }
     return service.getPresetDiff(presetId)
   })
+
+  ipcMain.handle(IPC_CHANNELS.initializePresetGit, async (event) => {
+    assertTrusted(event, window)
+    return service.initializePresetGit()
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.savePresetVersion,
+    async (event, request: SavePresetVersionRequest) => {
+      assertTrusted(event, window)
+      return service.savePresetVersion(request)
+    },
+  )
+
+  ipcMain.handle(IPC_CHANNELS.listPresetVersions, async (event) => {
+    assertTrusted(event, window)
+    return service.listPresetVersions()
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.restorePresetVersion,
+    async (event, request: RestorePresetVersionRequest) => {
+      assertTrusted(event, window)
+      return service.restorePresetVersion(request)
+    },
+  )
 
   ipcMain.handle(IPC_CHANNELS.openRoot, async (event) => {
     assertTrusted(event, window)

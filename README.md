@@ -36,6 +36,7 @@ Orca Preset Assistant 是嵌入 OrcaSlicer 主窗口的用户预设与打印历�
 
 - 在 Orca 内查看当前工作区的三类用户预设。
 - 用“Orca 创建/管理”或“本地 JSON”标记预设来源；只有 JSON 的本地预设仍可正常使用。
+- 查看逐预设的本地变化；在 `UserPresets` 中启用独立本地版本、保存快照并安全恢复旧版本。
 - 让 Codex 按授权级别读取通用状态、当前设置，或当前项目的零件摆放和模型几何。
 - 审批参数变化并选择“仅当前项目 / 更新当前永久预设 / 另存为新永久预设”。
 - 在没有后续冲突时回滚最近一次 Orca 写入。
@@ -51,6 +52,20 @@ Orca Preset Assistant 是嵌入 OrcaSlicer 主窗口的用户预设与打印历�
 - [查看 v0.5.0 发布说明](https://github.com/Siegfried19/OrcaPresetAssistant/releases/tag/v0.5.0)
 
 便携版无需安装，主要用于独立查看面板、连接工作区和故障排查。它不包含整个定制 OrcaSlicer。完整的内嵌面板、当前项目读取、原生三种写入和自动打印建档需要按照[原生补丁说明](./native/orca/README.md)和[打包说明](./native/orca/PACKAGING.md)构建完整版本。
+
+### 安装 Codex 插件
+
+Codex 插件与面板是同一仓库维护的两个组件：面板负责授权和最终写入，插件让 Codex 调用这些受控接口。
+
+从包含插件包的 Release 下载 `OrcaPresetAssistant-Codex-Plugin-<version>.zip`，解压到长期保留的目录后运行：
+
+```powershell
+codex plugin marketplace add "<解压后的插件包目录>"
+codex plugin add orca-preset-assistant@orca-preset-assistant-release
+codex plugin list
+```
+
+从源码构建时先运行 `pnpm package:plugin`，再解压 `release` 中生成的插件包。完成安装后新建一个 Codex 任务；在面板标题栏点击 `?` 可随时查看同样的安装步骤、权限说明和示例提问。完整说明见 [Codex 插件安装与使用](./docs/CODEX_PLUGIN.md)。
 
 ### Bambu LAN Only 打印
 
@@ -85,6 +100,7 @@ src/                         Electron/React 面板、本地 helper 与就地测�
 native/orca/                 针对固定 OrcaSlicer 基线的可审阅补丁
 plugins/orca-preset-assistant/
                              Codex 插件源码
+packaging/codex-marketplace/ Codex Release Marketplace 模板
 docs/                        用户、架构、验证与发布文档
 ```
 
@@ -118,9 +134,16 @@ node --test `
 pnpm package:win
 ```
 
+生成可单独发布的 Codex 插件包：
+
+```powershell
+pnpm package:plugin
+```
+
 ### 文档
 
 - [用户指南](./docs/USER_GUIDE.md)
+- [Codex 插件安装与使用](./docs/CODEX_PLUGIN.md)
 - [产品计划](./PRODUCT_PLAN.md)
 - [技术规格](./TECHNICAL_SPEC.md)
 - [验收清单](./ACCEPTANCE.md)
@@ -173,6 +196,7 @@ Official Orca presets remain in their original Orca-managed location. They are n
 
 - View all three user-preset types from inside Orca.
 - Mark each preset as either **Orca Created / Managed** or **Local JSON**. A JSON-only preset remains valid.
+- See local changes per preset; initialize independent local versions in `UserPresets`, save snapshots, and safely restore an earlier version.
 - Let Codex read general context, current settings, or current-project placement and model geometry according to explicit permission.
 - Approve a change only after choosing **Current Project Only**, **Update Current Permanent Preset**, or **Save as New Permanent Preset**.
 - Roll back the latest Orca write when no later change conflicts with it.
@@ -188,6 +212,20 @@ Machine presets are currently read-only. Automated Codex writes are limited to p
 - [Read the v0.5.0 release notes](https://github.com/Siegfried19/OrcaPresetAssistant/releases/tag/v0.5.0)
 
 The portable build requires no installation and is intended for standalone panel review, workspace access, and troubleshooting. It does not include the full custom OrcaSlicer build. The embedded panel, current-project access, three native write destinations, and automatic print archiving require a full build following the [native patch guide](./native/orca/README.md) and [packaging guide](./native/orca/PACKAGING.md).
+
+### Install the Codex plugin
+
+The panel and Codex plugin are two components maintained in this repository: the panel owns permissions and final writes, while the plugin lets Codex call those controlled interfaces.
+
+Download `OrcaPresetAssistant-Codex-Plugin-<version>.zip` from a Release that includes the plugin package, extract it to a permanent directory, and run:
+
+```powershell
+codex plugin marketplace add "<extracted plugin package directory>"
+codex plugin add orca-preset-assistant@orca-preset-assistant-release
+codex plugin list
+```
+
+When building from source, run `pnpm package:plugin` first and extract the generated package from `release`. Start a new Codex task after installation. The `?` button in the panel title bar shows the same installation steps, permission scopes, and example prompts. See [Codex plugin installation and usage](./docs/CODEX_PLUGIN.md) for full details.
 
 ### Bambu LAN Only printing
 
@@ -222,6 +260,7 @@ src/                         Electron/React panel, local helper, and colocated t
 native/orca/                 Reviewable patches for a pinned OrcaSlicer baseline
 plugins/orca-preset-assistant/
                              Codex plugin source
+packaging/codex-marketplace/ Codex Release Marketplace template
 docs/                        User, architecture, validation, and release documentation
 ```
 
@@ -255,9 +294,16 @@ Build the standalone Windows portable panel:
 pnpm package:win
 ```
 
+Build the separately distributable Codex plugin package:
+
+```powershell
+pnpm package:plugin
+```
+
 ### Documentation
 
 - [User guide](./docs/USER_GUIDE.md)
+- [Codex plugin installation and usage](./docs/CODEX_PLUGIN.md)
 - [Product plan](./PRODUCT_PLAN.md)
 - [Technical specification](./TECHNICAL_SPEC.md)
 - [Acceptance checklist](./ACCEPTANCE.md)

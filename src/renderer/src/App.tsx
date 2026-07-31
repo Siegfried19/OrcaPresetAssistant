@@ -1,6 +1,7 @@
 import {
   AlertCircle,
   Check,
+  CircleHelp,
   Command,
   Plus,
   RefreshCw,
@@ -11,15 +12,20 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
-import type { PresetView } from '@shared/contracts'
+import type { PresetDiff, PresetVersionView, PresetView } from '@shared/contracts'
 
+import { AiHelpSheet } from './components/AiHelpSheet'
+import { DiffSheet } from './components/DiffSheet'
 import { EmptyConnection } from './components/EmptyConnection'
 import { Inspector } from './components/Inspector'
 import { PresetList } from './components/PresetList'
 import { PrintHistoryPage } from './components/PrintHistoryPage'
 import { RecordPrintSheet } from './components/RecordPrintSheet'
+import { SaveVersionSheet } from './components/SaveVersionSheet'
 import { SettingsSheet } from './components/SettingsSheet'
 import { Sidebar } from './components/Sidebar'
+import { VersionHistorySheet } from './components/VersionHistorySheet'
+import { VersionStatusBar } from './components/VersionStatusBar'
 import { useDashboard } from './hooks/use-dashboard'
 import { useI18n } from './i18n/I18nProvider'
 import { createTranslator, warningTranslationKey, type TranslationKey } from './i18n/messages'
@@ -47,8 +53,17 @@ export function App(): React.JSX.Element {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [recordOpen, setRecordOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
+  const [saveVersionOpen, setSaveVersionOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [versions, setVersions] = useState<readonly PresetVersionView[]>([])
+  const [diff, setDiff] = useState<PresetDiff | null>(null)
+  const [showChanged, setShowChanged] = useState(false)
+  const [versionBusy, setVersionBusy] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+  const showChangedOnly = showChanged && (dashboard.snapshot?.stats.changed ?? 0) > 0
 
   const visiblePresets = useMemo(() => {
     if (!dashboard.snapshot) return []
@@ -56,6 +71,9 @@ export function App(): React.JSX.Element {
     const normalizedQuery = query.trim().toLocaleLowerCase(locale)
     return dashboard.snapshot.presets
       .filter((preset) => matchesFilter(preset, filter))
+      .filter(
+        (preset) => !showChangedOnly || ['new', 'modified', 'metadata'].includes(preset.gitState),
+      )
       .filter((preset) => {
         if (!normalizedQuery) return true
         return [preset.name, preset.inherits, preset.settingsId, preset.relativePath].some(
@@ -63,7 +81,7 @@ export function App(): React.JSX.Element {
         )
       })
       .sort((left, right) => left.name.localeCompare(right.name, locale))
-  }, [dashboard.snapshot, filter, language, query])
+  }, [dashboard.snapshot, filter, language, query, showChangedOnly])
 
   useEffect(() => {
     if (!toast) return
@@ -112,6 +130,38 @@ export function App(): React.JSX.Element {
     }
   }
 
+  const showDiff = async (presetId: string): Promise<void> => {
+    try {
+      setDiff(await dashboard.getPresetDiff(presetId))
+    } catch {
+      // The controller already exposes a user-facing error.
+    }
+  }
+
+  const initializePresetGit = async (): Promise<void> => {
+    setVersionBusy(true)
+    try {
+      await dashboard.initializePresetGit()
+      setToast(t('toast.versionEnabled'))
+    } catch {
+      // The controller already exposes a user-facing error.
+    } finally {
+      setVersionBusy(false)
+    }
+  }
+
+  const openVersionHistory = async (): Promise<void> => {
+    setHistoryOpen(true)
+    setHistoryLoading(true)
+    try {
+      setVersions(await dashboard.listPresetVersions())
+    } catch {
+      setVersions([])
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
   const changeLanguage = async (nextLanguage: 'zh-CN' | 'en'): Promise<void> => {
     try {
       await dashboard.updateSettings({ language: nextLanguage })
@@ -151,6 +201,15 @@ export function App(): React.JSX.Element {
             : hostT('app.waiting')}
         </div>
         <div className="titlebar-actions">
+          <button
+            aria-label={hostT('help.open')}
+            className="titlebar-settings"
+            onClick={() => setHelpOpen(true)}
+            title={hostT('help.open')}
+            type="button"
+          >
+            <CircleHelp aria-hidden="true" size={16} />
+          </button>
           <button
             aria-label={hostT('settings.open')}
             className="titlebar-settings"
@@ -288,6 +347,16 @@ export function App(): React.JSX.Element {
                         </kbd>
                       </label>
                     </header>
+                    <VersionStatusBar
+                      busy={versionBusy}
+                      changedCount={snapshot.stats.changed}
+                      onInitialize={() => void initializePresetGit()}
+                      onOpenHistory={() => void openVersionHistory()}
+                      onSave={() => setSaveVersionOpen(true)}
+                      onToggleChanged={() => setShowChanged((current) => !current)}
+                      root={snapshot.root}
+                      showingChanged={showChangedOnly}
+                    />
                     <div
                       aria-label={t('filter.label')}
                       className="preset-filter-tabs"
@@ -331,6 +400,7 @@ export function App(): React.JSX.Element {
                     await dashboard.rollbackChangeProposal(id)
                     setToast(t('toast.proposalRolledBack'))
                   }}
+                  onShowDiff={(presetId) => void showDiff(presetId)}
                   preset={selectedPreset}
                   proposal={selectedProposal}
                   proposalTargetName={proposalTargetName}
@@ -379,6 +449,33 @@ export function App(): React.JSX.Element {
           settings={snapshot.settings}
         />
       )}
+      {helpOpen && <AiHelpSheet onClose={() => setHelpOpen(false)} />}
+      {saveVersionOpen && (
+        <SaveVersionSheet
+          changedCount={snapshot.stats.changed}
+          onClose={() => setSaveVersionOpen(false)}
+          onSave={async (message) => {
+            await dashboard.savePresetVersion(message)
+            setShowChanged(false)
+            setToast(t('toast.versionSaved'))
+          }}
+        />
+      )}
+      {historyOpen && (
+        <VersionHistorySheet
+          changedCount={snapshot.stats.changed}
+          currentRevision={snapshot.root.latestPresetVersion?.revision ?? null}
+          loading={historyLoading}
+          onClose={() => setHistoryOpen(false)}
+          onRestore={async (revision) => {
+            await dashboard.restorePresetVersion(revision)
+            setShowChanged(false)
+            setToast(t('toast.versionRestored'))
+          }}
+          versions={versions}
+        />
+      )}
+      {diff && <DiffSheet diff={diff} onClose={() => setDiff(null)} />}
 
       {dashboard.error && (
         <div className="toast is-error" role="alert">

@@ -8,10 +8,13 @@ import type {
   OrcaEffectiveSettingsSnapshot,
   ParameterSnapshot,
   PresetDiff,
+  PresetVersionView,
   QueueChangeProposalRequest,
   RecordPrintRequest,
+  RestorePresetVersionRequest,
   RollbackGuardView,
   RollbackGuardResult,
+  SavePresetVersionRequest,
   UpdatePrintHistoryRequest,
   UpdateSettingsRequest,
 } from './contracts'
@@ -42,6 +45,10 @@ export const HELPER_HTTP_ROUTES = {
   rejectChangeProposal: '/api/v1/change-proposals/reject',
   guardProposalRollback: '/api/v1/change-proposals/rollback-guard',
   getPresetDiff: '/api/v1/preset-diff',
+  initializePresetGit: '/api/v1/preset-versions/initialize',
+  savePresetVersion: '/api/v1/preset-versions/save',
+  listPresetVersions: '/api/v1/preset-versions/list',
+  restorePresetVersion: '/api/v1/preset-versions/restore',
   openRoot: '/api/v1/root/open',
   launchOrca: '/api/v1/orca/launch',
   publishNativeState: '/internal/v1/native-state/publish',
@@ -123,6 +130,10 @@ export interface HelperHttpRequestMap {
   readonly rejectChangeProposal: { readonly id: string }
   readonly guardProposalRollback: GuardProposalRollbackRequest
   readonly getPresetDiff: { readonly presetId: string }
+  readonly initializePresetGit: Record<string, never>
+  readonly savePresetVersion: SavePresetVersionRequest
+  readonly listPresetVersions: Record<string, never>
+  readonly restorePresetVersion: RestorePresetVersionRequest
   readonly openRoot: Record<string, never>
   readonly launchOrca: Record<string, never>
   readonly publishNativeState: PublishNativeStateRequest
@@ -153,6 +164,10 @@ export interface HelperHttpResponseMap {
   readonly rejectChangeProposal: ChangeProposalView
   readonly guardProposalRollback: RollbackGuardResult
   readonly getPresetDiff: PresetDiff
+  readonly initializePresetGit: DashboardSnapshot
+  readonly savePresetVersion: DashboardSnapshot
+  readonly listPresetVersions: readonly PresetVersionView[]
+  readonly restorePresetVersion: DashboardSnapshot
   readonly openRoot: null
   readonly launchOrca: null
   readonly publishNativeState: PublishedNativeState

@@ -1,15 +1,17 @@
 import {
   AppWindow,
+  Box,
   CircleCheck,
   CircleDashed,
   FileJson2,
   FlaskConical,
   Layers3,
   Printer,
+  RefreshCw,
   TriangleAlert,
 } from 'lucide-react'
 
-import type { PresetKind, PresetOrigin, PrintResult } from '@shared/contracts'
+import type { GitState, PresetKind, PresetOrigin, PrintResult } from '@shared/contracts'
 
 import { useI18n } from '../i18n/I18nProvider'
 
@@ -42,6 +44,24 @@ export function OriginBadge({ origin }: { readonly origin: PresetOrigin }): Reac
     <span className={`origin-badge origin-${origin}`} title={t(`origin.${origin}.detail`)}>
       <Icon aria-hidden="true" size={14} strokeWidth={1.8} />
       <span>{t(`origin.${origin}`)}</span>
+    </span>
+  )
+}
+
+export function GitBadge({ state }: { readonly state: GitState }): React.JSX.Element {
+  const { t } = useI18n()
+  const Icon =
+    state === 'clean'
+      ? CircleCheck
+      : state === 'unknown'
+        ? CircleDashed
+        : state === 'metadata'
+          ? RefreshCw
+          : Box
+  return (
+    <span className={`git-badge git-${state}`}>
+      <Icon aria-hidden="true" size={13} strokeWidth={2} />
+      {t(`git.${state}`)}
     </span>
   )
 }

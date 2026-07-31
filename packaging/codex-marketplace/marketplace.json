@@ -1,0 +1,20 @@
+{
+  "name": "orca-preset-assistant-release",
+  "interface": {
+    "displayName": "Orca Preset Assistant Release"
+  },
+  "plugins": [
+    {
+      "name": "orca-preset-assistant",
+      "source": {
+        "source": "local",
+        "path": "./plugins/orca-preset-assistant"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

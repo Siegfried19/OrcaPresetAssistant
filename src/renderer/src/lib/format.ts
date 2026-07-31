@@ -1,4 +1,4 @@
-import type { AppErrorCode, Language } from '@shared/contracts'
+import type { AppErrorCode, Language, PresetView } from '@shared/contracts'
 
 import { errorTranslationKey, type Translator } from '../i18n/messages'
 
@@ -26,6 +26,12 @@ const APP_ERROR_CODES: readonly AppErrorCode[] = [
   'invalid-authoritative-receipt',
   'workspace-mismatch',
   'orca-restart-required',
+  'git-unavailable',
+  'git-operation-failed',
+  'git-nothing-to-save',
+  'git-working-tree-dirty',
+  'git-history-not-found',
+  'invalid-version-message',
 ]
 
 export function formatDate(value: string, language: Language, t: Translator): string {
@@ -60,6 +66,16 @@ export function compactPath(path: string, t: Translator): string {
   const parts = path.split(/[\\/]/u).filter(Boolean)
   if (parts.length <= 3) return path
   return `${parts[0]}\\…\\${parts.slice(-2).join('\\')}`
+}
+
+export function formatGitSummary(preset: PresetView, t: Translator): string {
+  if (preset.gitState === 'modified' && preset.diffStats) {
+    return t('git.summary.stats', {
+      added: preset.diffStats.added,
+      deleted: preset.diffStats.deleted,
+    })
+  }
+  return t(`git.summary.${preset.gitState}`)
 }
 
 export function errorMessage(error: unknown, t: Translator): string {
