@@ -32,6 +32,48 @@ import {
 } from './orca-native-bridge'
 
 const NATIVE_HEARTBEAT_MS = 4_000
+const LAST_ARCHIVED_PRINT_SESSION_KEY = 'orca-preset-assistant.last-archived-print'
+
+export class PrintArchiveGuard {
+  private readonly active = new Set<string>()
+  private readonly completed = new Set<string>()
+
+  public constructor(private readonly sessionStorage: Storage) {}
+
+  public claim(archiveId: string): boolean {
+    if (
+      this.active.has(archiveId) ||
+      this.completed.has(archiveId) ||
+      this.readLastCompleted() === archiveId
+    ) {
+      return false
+    }
+    this.active.add(archiveId)
+    return true
+  }
+
+  public complete(archiveId: string): void {
+    this.active.delete(archiveId)
+    this.completed.add(archiveId)
+    try {
+      this.sessionStorage.setItem(LAST_ARCHIVED_PRINT_SESSION_KEY, archiveId)
+    } catch {
+      // The in-memory guard still prevents duplicates when tab storage is unavailable.
+    }
+  }
+
+  public release(archiveId: string): void {
+    this.active.delete(archiveId)
+  }
+
+  private readLastCompleted(): string | null {
+    try {
+      return this.sessionStorage.getItem(LAST_ARCHIVED_PRINT_SESSION_KEY)
+    } catch {
+      return null
+    }
+  }
+}
 
 interface DashboardHostEnvironment {
   readonly dashboard?: DashboardApi
@@ -111,8 +153,7 @@ function nativeFailureRevision(error: unknown, bridge: OrcaNativeBridge): string
 
 class OrcaDashboardApi implements DashboardApi {
   private readonly listeners = new Set<(snapshot: DashboardSnapshot) => void>()
-  private readonly archivedPrints = new Set<string>()
-  private readonly archivingPrints = new Set<string>()
+  private readonly printArchiveGuard: PrintArchiveGuard
   private snapshot: DashboardSnapshot | null = null
   private heartbeat: number | null = null
   private nativeSync: Promise<void> | null = null
@@ -132,6 +173,7 @@ class OrcaDashboardApi implements DashboardApi {
     private readonly environment: DashboardHostEnvironment,
     startBackgroundTasks: boolean,
   ) {
+    this.printArchiveGuard = new PrintArchiveGuard(environment.sessionStorage)
     if (startBackgroundTasks) {
       environment.addEventListener('orca-preset-assistant-print-submitted', this.onPrintSubmitted)
       environment.addEventListener('orca-preset-assistant:print-submitted', this.onPrintSubmitted)
@@ -218,14 +260,11 @@ class OrcaDashboardApi implements DashboardApi {
     print: OrcaPrintSubmittedResult,
     currentSnapshot?: DashboardSnapshot,
   ): Promise<void> {
-    if (this.archivedPrints.has(print.archiveId) || this.archivingPrints.has(print.archiveId)) {
-      return
-    }
-    const snapshot = currentSnapshot ?? (await this.requireSnapshot())
-    if (!snapshot.settings.autoArchive) return
-
-    this.archivingPrints.add(print.archiveId)
+    if (!this.printArchiveGuard.claim(print.archiveId)) return
     try {
+      const snapshot = currentSnapshot ?? (await this.requireSnapshot())
+      if (!snapshot.settings.autoArchive) return
+
       let includeProjectPath: string | null = null
       let exportFailed = false
       const shouldExport =
@@ -272,11 +311,11 @@ class OrcaDashboardApi implements DashboardApi {
         },
         { nativeBridge: true },
       )
-      this.archivedPrints.add(print.archiveId)
+      this.printArchiveGuard.complete(print.archiveId)
       const tracked = await this.track(next)
       this.emit(exportFailed ? withWarning(tracked, 'project-archive-failed') : tracked)
     } finally {
-      this.archivingPrints.delete(print.archiveId)
+      this.printArchiveGuard.release(print.archiveId)
     }
   }
 

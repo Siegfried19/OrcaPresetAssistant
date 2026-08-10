@@ -153,6 +153,18 @@ helper 的打包契约是：`--serve` 绝不能创建 `BrowserWindow`，只能�
 - 英文使用源字符串，简体中文通过 Orca 原生 gettext 目录翻译；
 - 不修改发送协议、不绕过授权，也不会尝试远程切换打印机安全设置。
 
+## 第十二批参数页更新回执
+
+[0012-show-native-parameter-update-notice.patch](patches/0012-show-native-parameter-update-notice.patch)
+把提案写入结果直接反馈到 Orca 的真实 Prepare 参数区域：
+
+- 仅在 `proposal.apply` 已由 Orca 权威执行并验证成功后显示“当前预设已更新”；
+- 回执位于真实参数分类页签与参数字段之间，显示目标预设、写入位置和修改项数量；
+- “查看修改”使用 Orca 的参数名称和单位展开修改前/修改后明细；
+- “撤销”复用原有 `proposal.rollback` 的 revision/value guard，不会覆盖更新后又被手工修改的值；
+- 永久预设写入完成后 Orca 会清除普通 dirty 状态，因此本回执不依赖字段旁的临时回滚箭头；
+- 撤销成功后保留本次更新的可见记录，并明确标记“本次更新已撤销”。
+
 ## URL 配置
 
 默认页面：
@@ -202,6 +214,7 @@ git apply --check "$patchRoot\0008-fix-helper-handoff-and-protect-workspace.patc
 git apply --check "$patchRoot\0009-follow-orca-language-for-assistant-tab.patch"
 git apply --check "$patchRoot\0010-enable-current-project-geometry-access.patch"
 git apply --check "$patchRoot\0011-explain-bambu-lan-developer-mode.patch"
+git apply --check "$patchRoot\0012-show-native-parameter-update-notice.patch"
 ```
 
 不能在未应用前一批的原始源树上单独检查后续补丁。产品仓库验证使用临时导出的 Orca 基线依次应用前置补丁，不改动用户日常 Orca 安装。
@@ -215,7 +228,7 @@ git status --short --branch
 $patchRoot = (Resolve-Path ".\native\orca\patches").Path
 git apply --check "$patchRoot\0001-embed-preset-assistant-panel.patch"
 git apply --check "$patchRoot\0002-use-workspace-user-presets-root.patch"
-# 在临时基线上顺序应用 0001→0011；每一步先 check，再应用。
+# 在临时基线上顺序应用 0001→0012；每一步先 check，再应用。
 ```
 
 确认检查通过后应用：
@@ -232,6 +245,7 @@ git apply "$patchRoot\0008-fix-helper-handoff-and-protect-workspace.patch"
 git apply "$patchRoot\0009-follow-orca-language-for-assistant-tab.patch"
 git apply "$patchRoot\0010-enable-current-project-geometry-access.patch"
 git apply "$patchRoot\0011-explain-bambu-lan-developer-mode.patch"
+git apply "$patchRoot\0012-show-native-parameter-update-notice.patch"
 ```
 
 应用后先核对范围：
@@ -254,6 +268,7 @@ cmake --build build --config Release --target ALL_BUILD -- -m
 本批至少需要确认：
 
 - `PresetAssistantPanel.cpp` 编译成功
+- `ParamsPanel.cpp` 与 `PresetAssistantBridge.cpp` 编译成功
 - `OrcaSlicer.dll` 重新链接成功
 - `resources\web\orca_preset_assistant\index.html` 出现在打包目录
 - `test_preset_bundle_loading.cpp` 中 `[Preset][Workspace]` 测试通过
@@ -274,6 +289,10 @@ cmake --build build --config Release --target ALL_BUILD -- -m
 10. 在 Orca 原生界面另存一个用户工艺预设，文件出现在 `<workspace>\UserPresets\process`。
 11. 登录或切换 OrcaCloud 账号，外部目录不被删除或改写，日志明确显示用户预设云同步已禁用。
 12. 官方预设仍正常显示，且 Orca 的系统预设目录没有发生变化。
+13. 从助手批准并应用一次 process 或 filament 修改，Prepare 参数区出现“当前预设已更新”。
+14. 展开“查看修改”，参数名称、修改前、修改后和单位与实际写入值一致。
+15. 未继续手工修改时点击“撤销”可恢复原值；之后手工改过任一目标值时，撤销必须拒绝覆盖。
+16. 永久预设写入即使没有字段 dirty 回滚箭头，参数页回执仍然可见。
 
 ## 回退
 

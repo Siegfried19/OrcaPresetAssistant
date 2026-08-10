@@ -20,6 +20,7 @@ import { EmptyConnection } from './components/EmptyConnection'
 import { Inspector } from './components/Inspector'
 import { PresetList } from './components/PresetList'
 import { PrintHistoryPage } from './components/PrintHistoryPage'
+import { ProposalSummaryBanner } from './components/ProposalSummaryBanner'
 import { RecordPrintSheet } from './components/RecordPrintSheet'
 import { SaveVersionSheet } from './components/SaveVersionSheet'
 import { SettingsSheet } from './components/SettingsSheet'
@@ -110,12 +111,15 @@ export function App(): React.JSX.Element {
       (proposal) => proposal.status === 'pending' && proposal.approvedAt === null,
     ) ??
     presetProposals.find((proposal) => proposal.status === 'pending') ??
-    latestActionableProposal ??
     presetProposals[0] ??
     null
   const proposalTargetName = selectedProposal
     ? (dashboard.snapshot?.presets.find((preset) => preset.id === selectedProposal.presetId)
         ?.name ?? selectedProposal.presetId)
+    : null
+  const latestActionableTargetName = latestActionableProposal
+    ? (dashboard.snapshot?.presets.find((preset) => preset.id === latestActionableProposal.presetId)
+        ?.name ?? latestActionableProposal.presetId)
     : null
 
   const refresh = async (): Promise<void> => {
@@ -171,7 +175,7 @@ export function App(): React.JSX.Element {
     }
   }
 
-  if (dashboard.loading || !dashboard.snapshot) {
+  if (dashboard.loading) {
     return (
       <div className="loading-screen">
         <span className="app-mark">
@@ -179,6 +183,27 @@ export function App(): React.JSX.Element {
         </span>
         <div className="loading-ring" />
         <span>{t('app.loading')}</span>
+      </div>
+    )
+  }
+
+  if (!dashboard.snapshot) {
+    return (
+      <div className="loading-screen loading-screen-error" role="alert">
+        <span className="loading-error-icon">
+          <AlertCircle aria-hidden="true" size={24} />
+        </span>
+        <strong>{t('app.loadFailedTitle')}</strong>
+        <span>{dashboard.error ?? t('app.loadFailedBody')}</span>
+        <button
+          className="primary-button"
+          disabled={refreshing}
+          onClick={() => void refresh()}
+          type="button"
+        >
+          <RefreshCw aria-hidden="true" className={refreshing ? 'is-spinning' : ''} size={16} />
+          {t('action.retry')}
+        </button>
       </div>
     )
   }
@@ -317,6 +342,20 @@ export function App(): React.JSX.Element {
                       <AlertCircle aria-hidden="true" size={16} />
                       <span>{t(warningTranslationKey(snapshot.warnings[0]!))}</span>
                     </div>
+                  )}
+
+                  {latestActionableProposal && latestActionableTargetName && (
+                    <ProposalSummaryBanner
+                      onOpen={() => {
+                        setPage('user-presets')
+                        setFilter('all')
+                        setQuery('')
+                        setShowChanged(false)
+                        setSelectedId(latestActionableProposal.presetId)
+                      }}
+                      proposal={latestActionableProposal}
+                      targetName={latestActionableTargetName}
+                    />
                   )}
 
                   <section className="library-card">

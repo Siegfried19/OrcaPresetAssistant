@@ -160,6 +160,12 @@ machine 有意保持只读：传入 `presetType=machine` 返回 `PRESET_TYPE_REA
 - 更新当前用户永久预设：恢复 before 并再次原生保存。
 - 另存新永久预设：只切回原预设；新建的永久预设继续保留，不自动删除。
 
+### Orca 参数页更新回执
+
+`0012` 在 `proposal.apply` 成功返回前，把同一份 Orca 权威 `before/after` 发布到真实 `ParamsPanel`。回执显示目标预设、destination 和修改数量，并可展开 Orca 参数名称、单位、修改前和修改后值。
+
+回执中的“撤销”不建立第二套写入逻辑，而是调用同一个 `proposal.rollback` 事务。revision 或当前值发生变化时，guard 失效并拒绝覆盖用户后续手工修改；成功撤销时，回执保留并标记“本次更新已撤销”。永久预设在 `save_preset()` 后通常没有普通 dirty 回滚箭头，因此该回执是永久写入的明确可见确认。
+
 ## 打印建档
 
 PrintJob 只有在设备提交成功后才通过 `wxGetApp().CallAfter` 把事件切回 UI 线程。原生 payload 包含：
@@ -189,7 +195,7 @@ PrintJob 只有在设备提交成功后才通过 `wxGetApp().CallAfter` 把事�
 
 ## 最小验收
 
-1. 0001→0002→0003→0004→0005→0006→0007→0008 在临时 Orca 基线上顺序通过 `git apply --check --whitespace=error-all`。
+1. 0001→0002→0003→0004→0005→0006→0007→0008→0009→0010→0011→0012 在临时 Orca 基线上顺序通过 `git apply --check --whitespace=error-all`。
 2. 错误来源、token、协议、revision、批准状态或预设 identity 全部失败关闭。
 3. 正式 React 页面来自无窗口 helper，桌面仍只有 Orca 和 Codex 两个窗口。
 4. session token 不写入 ready 文件；语言 query 插在 `#session` fragment 之前。
