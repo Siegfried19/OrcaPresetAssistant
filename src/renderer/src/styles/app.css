@@ -1433,6 +1433,12 @@
   background: var(--green-soft);
 }
 
+.proposal-status-partially-rolled-back,
+.proposal-status-changed-after-apply {
+  color: var(--orange);
+  background: var(--orange-soft);
+}
+
 .proposal-status-awaiting-orca {
   color: var(--accent);
   background: var(--accent-soft);
@@ -1699,6 +1705,25 @@
 
 .proposal-rollback button {
   width: 100%;
+}
+
+.proposal-native-state {
+  display: flex;
+  padding: 10px;
+  gap: 8px;
+  align-items: flex-start;
+  color: var(--orange);
+  border: 1px solid color-mix(in srgb, var(--orange) 25%, var(--border));
+  border-radius: 8px;
+  background: var(--orange-soft);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.proposal-native-state-rolled-back {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 25%, var(--border));
+  background: var(--green-soft);
 }
 
 .proposal-form-error {

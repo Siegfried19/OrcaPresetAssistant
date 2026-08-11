@@ -11,6 +11,7 @@ import type {
 import { useI18n } from '../i18n/I18nProvider'
 import type { TranslationKey } from '../i18n/messages'
 import { parameterCapability } from '../lib/parameter-capabilities'
+import { proposalDisplayChange } from '../lib/proposal-summary'
 
 interface ChangeProposalCardProps {
   readonly proposal: ChangeProposalView | null
@@ -47,10 +48,16 @@ export function ChangeProposalCard({
   const [pendingAction, setPendingAction] = useState<'approve' | 'reject' | 'rollback' | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
 
+  const displayChange = useMemo(
+    () => (proposal ? proposalDisplayChange(proposal) : null),
+    [proposal],
+  )
   const keys = useMemo(() => {
-    if (!proposal) return []
-    return Array.from(new Set([...Object.keys(proposal.before), ...Object.keys(proposal.after)]))
-  }, [proposal])
+    if (!displayChange) return []
+    return Array.from(
+      new Set([...Object.keys(displayChange.before), ...Object.keys(displayChange.after)]),
+    )
+  }, [displayChange])
 
   if (!proposal) {
     return (
@@ -63,6 +70,7 @@ export function ChangeProposalCard({
       </section>
     )
   }
+  const visibleChange = displayChange ?? { before: proposal.before, after: proposal.after }
 
   const approve = async (): Promise<void> => {
     if (destination === 'save-as-new-preset' && !newPresetName.trim()) {
@@ -114,6 +122,17 @@ export function ChangeProposalCard({
     ? 'proposal.status.awaiting-orca'
     : `proposal.status.${proposal.status}`
   const statusClass = awaitingOrca ? 'awaiting-orca' : proposal.status
+  const nativeStateKey: TranslationKey | null = proposal.currentValues
+    ? proposal.status === 'partially-rolled-back'
+      ? 'proposal.nativeState.partiallyRolledBack'
+      : proposal.status === 'changed-after-apply'
+        ? 'proposal.nativeState.changedAfterApply'
+        : proposal.status === 'rolled-back'
+          ? 'proposal.nativeState.rolledBack'
+          : proposal.status === 'applied' && !proposal.rollbackGuard
+            ? 'proposal.nativeState.rollbackMovedToOrca'
+            : null
+    : null
 
   return (
     <section className="detail-section">
@@ -150,9 +169,9 @@ export function ChangeProposalCard({
                     </small>
                   )}
                 </div>
-                <span>{valueText(proposal.before[key])}</span>
+                <span>{valueText(visibleChange.before[key])}</span>
                 <ArrowRight aria-hidden="true" size={12} />
-                <span>{valueText(proposal.after[key])}</span>
+                <span>{valueText(visibleChange.after[key])}</span>
               </div>
             )
           })}
@@ -259,6 +278,13 @@ export function ChangeProposalCard({
               </div>
             )}
           </>
+        )}
+
+        {nativeStateKey && (
+          <div className={`proposal-native-state proposal-native-state-${proposal.status}`}>
+            <RotateCcw aria-hidden="true" size={16} />
+            <span>{t(nativeStateKey)}</span>
+          </div>
         )}
 
         {proposal.error && <div className="form-error proposal-form-error">{proposal.error}</div>}

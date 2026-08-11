@@ -30,6 +30,7 @@ import { VersionStatusBar } from './components/VersionStatusBar'
 import { useDashboard } from './hooks/use-dashboard'
 import { useI18n } from './i18n/I18nProvider'
 import { createTranslator, warningTranslationKey, type TranslationKey } from './i18n/messages'
+import { latestProposal } from './lib/proposal-summary'
 import type { PrimaryPage, ViewFilter } from './types'
 
 const FILTER_LABEL_KEYS: Record<ViewFilter, TranslationKey> = {
@@ -100,12 +101,7 @@ export function App(): React.JSX.Element {
     dashboard.snapshot?.changeProposals.filter(
       (proposal) => proposal.presetId === selectedPreset?.id,
     ) ?? []
-  const latestActionableProposal =
-    dashboard.snapshot?.changeProposals.find(
-      (proposal) =>
-        (proposal.status === 'pending' && proposal.approvedAt === null) ||
-        (proposal.status === 'applied' && proposal.rollbackGuard !== null),
-    ) ?? null
+  const latestVisibleProposal = latestProposal(dashboard.snapshot?.changeProposals ?? [])
   const selectedProposal =
     presetProposals.find(
       (proposal) => proposal.status === 'pending' && proposal.approvedAt === null,
@@ -117,9 +113,9 @@ export function App(): React.JSX.Element {
     ? (dashboard.snapshot?.presets.find((preset) => preset.id === selectedProposal.presetId)
         ?.name ?? selectedProposal.presetId)
     : null
-  const latestActionableTargetName = latestActionableProposal
-    ? (dashboard.snapshot?.presets.find((preset) => preset.id === latestActionableProposal.presetId)
-        ?.name ?? latestActionableProposal.presetId)
+  const latestVisibleTargetName = latestVisibleProposal
+    ? (dashboard.snapshot?.presets.find((preset) => preset.id === latestVisibleProposal.presetId)
+        ?.name ?? latestVisibleProposal.presetId)
     : null
 
   const refresh = async (): Promise<void> => {
@@ -344,17 +340,17 @@ export function App(): React.JSX.Element {
                     </div>
                   )}
 
-                  {latestActionableProposal && latestActionableTargetName && (
+                  {latestVisibleProposal && latestVisibleTargetName && (
                     <ProposalSummaryBanner
                       onOpen={() => {
                         setPage('user-presets')
                         setFilter('all')
                         setQuery('')
                         setShowChanged(false)
-                        setSelectedId(latestActionableProposal.presetId)
+                        setSelectedId(latestVisibleProposal.presetId)
                       }}
-                      proposal={latestActionableProposal}
-                      targetName={latestActionableTargetName}
+                      proposal={latestVisibleProposal}
+                      targetName={latestVisibleTargetName}
                       writeCapabilities={snapshot.writeCapabilities}
                     />
                   )}

@@ -331,15 +331,29 @@ const zhCN = {
   'proposal.status.applied': '已应用并验证',
   'proposal.status.rejected': '已拒绝',
   'proposal.status.failed': '执行失败',
+  'proposal.status.partially-rolled-back': '部分回滚',
+  'proposal.status.changed-after-apply': '已在 Orca 中调整',
   'proposal.status.rolled-back': '已回滚',
   'proposal.notice.pendingTitle': '有一项参数修改等待你确认',
   'proposal.notice.awaitingTitle': '修改已批准，正在等待 Orca 回执',
   'proposal.notice.appliedTitle': '最近一次参数修改已由 Orca 应用并验证',
+  'proposal.notice.partiallyRolledBackTitle': '最近一次参数修改已在 Orca 中部分恢复',
+  'proposal.notice.changedAfterApplyTitle': '最近一次参数修改后来又在 Orca 中调整',
+  'proposal.notice.rolledBackTitle': '最近一次参数修改已恢复到修改前',
+  'proposal.notice.rejectedTitle': '最近一次参数修改未应用',
+  'proposal.notice.failedTitle': '最近一次参数修改执行失败',
   'proposal.notice.count': '{count} 项参数变化',
   'proposal.notice.changesLabel': '修改前后参数摘要',
   'proposal.notice.open': '查看修改与写入位置',
   'proposal.verified.title': 'Orca 已回读验证',
   'proposal.verified.body': '修改后数值已在原生版本 {revision} 中确认。写入位置：{destination}。',
+  'proposal.nativeState.partiallyRolledBack':
+    'Orca 切片页已恢复部分参数；其余参数仍保持应用值。继续在切片页撤销时，这张卡会自动同步。',
+  'proposal.nativeState.changedAfterApply':
+    '这些参数后来在 Orca 中被改成了其他值，助手已按当前值更新，不会重复覆盖。',
+  'proposal.nativeState.rolledBack': 'Orca 当前值已确认全部恢复到这次修改之前。',
+  'proposal.nativeState.rollbackMovedToOrca':
+    'Orca 后续操作已使原回滚凭证失效；请在切片页继续撤销，这张卡会自动同步。',
   'diff.eyebrow': '版本差异',
   'diff.subtitle': '相对于最近一次本地 Git 记录的文本差异。',
   'diff.clean': '这个预设与最近一次 Git 记录一致。',
@@ -767,16 +781,33 @@ const en: MessageCatalog = {
   'proposal.status.applied': 'Applied and Verified',
   'proposal.status.rejected': 'Rejected',
   'proposal.status.failed': 'Failed',
+  'proposal.status.partially-rolled-back': 'Partially Rolled Back',
+  'proposal.status.changed-after-apply': 'Adjusted in Orca',
   'proposal.status.rolled-back': 'Rolled Back',
   'proposal.notice.pendingTitle': 'A parameter change is waiting for your approval',
   'proposal.notice.awaitingTitle': 'The change is approved and waiting for Orca',
   'proposal.notice.appliedTitle': 'The latest parameter change was applied and verified by Orca',
+  'proposal.notice.partiallyRolledBackTitle':
+    'The latest parameter change was partially rolled back in Orca',
+  'proposal.notice.changedAfterApplyTitle':
+    'The latest parameter change was adjusted again in Orca',
+  'proposal.notice.rolledBackTitle': 'The latest parameter change was rolled back',
+  'proposal.notice.rejectedTitle': 'The latest parameter change was not applied',
+  'proposal.notice.failedTitle': 'The latest parameter change failed',
   'proposal.notice.count': '{count} parameter changes',
   'proposal.notice.changesLabel': 'Before and after parameter summary',
   'proposal.notice.open': 'Review Changes and Destination',
   'proposal.verified.title': 'Verified by Orca readback',
   'proposal.verified.body':
     'The After values were confirmed at native revision {revision}. Destination: {destination}.',
+  'proposal.nativeState.partiallyRolledBack':
+    'Some values were restored on the Orca slicing page; the remaining values are still applied. This card will keep syncing as you undo there.',
+  'proposal.nativeState.changedAfterApply':
+    'These values were later changed to different values in Orca. The assistant now reflects the current state and will not overwrite it.',
+  'proposal.nativeState.rolledBack':
+    'The current Orca values confirm that this change was fully rolled back.',
+  'proposal.nativeState.rollbackMovedToOrca':
+    'A later Orca action invalidated the original rollback guard. Continue undoing on the slicing page and this card will sync automatically.',
   'diff.eyebrow': 'Version Diff',
   'diff.subtitle': 'Text difference from the latest local Git record.',
   'diff.clean': 'This preset matches the latest Git record.',

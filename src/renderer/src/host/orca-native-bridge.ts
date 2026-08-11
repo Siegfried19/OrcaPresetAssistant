@@ -83,7 +83,6 @@ export interface OrcaNativeStateResult {
 export interface OrcaNativeSettingsResult {
   readonly presets: OrcaPresetSelections
   readonly effective: ParameterSnapshot
-  readonly writeCapabilities: OrcaWriteCapabilities
 }
 
 export interface OrcaPrintSubmittedResult {
@@ -112,6 +111,10 @@ const MUTATION_METHODS = new Set([
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+export function isOrcaRevisionConflict(error: unknown): boolean {
+  return isRecord(error) && error.code === 'REVISION_CONFLICT'
 }
 
 function isParameterValue(value: unknown, depth = 0): value is ParameterValue {
@@ -234,10 +237,7 @@ function isNativeStateResult(value: unknown): value is OrcaNativeStateResult {
 
 function isNativeSettingsResult(value: unknown): value is OrcaNativeSettingsResult {
   return (
-    isRecord(value) &&
-    isPresetSelections(value.presets) &&
-    isParameterSnapshot(value.effective) &&
-    isWriteCapabilities(value.writeCapabilities)
+    isRecord(value) && isPresetSelections(value.presets) && isParameterSnapshot(value.effective)
   )
 }
 

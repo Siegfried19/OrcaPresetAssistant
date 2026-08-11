@@ -1,6 +1,6 @@
 {
   "name": "orca-preset-assistant",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "private": true,
   "packageManager": "pnpm@11.9.0",
   "description": "An OrcaSlicer workspace for user presets, controlled Codex changes, and reproducible print history.",

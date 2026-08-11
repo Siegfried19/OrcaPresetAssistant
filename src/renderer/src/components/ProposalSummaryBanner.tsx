@@ -5,6 +5,7 @@ import type { ChangeProposalView, OrcaWriteCapabilities } from '@shared/contract
 import { useI18n } from '../i18n/I18nProvider'
 import type { TranslationKey } from '../i18n/messages'
 import { parameterCapability } from '../lib/parameter-capabilities'
+import { proposalDisplayChange } from '../lib/proposal-summary'
 
 interface ProposalSummaryBannerProps {
   readonly proposal: ChangeProposalView
@@ -24,20 +25,30 @@ export function ProposalSummaryBanner({
   onOpen,
 }: ProposalSummaryBannerProps): React.JSX.Element {
   const { t } = useI18n()
+  const displayChange = proposalDisplayChange(proposal)
   const keys = Array.from(
-    new Set([...Object.keys(proposal.before), ...Object.keys(proposal.after)]),
+    new Set([...Object.keys(displayChange.before), ...Object.keys(displayChange.after)]),
   )
   const awaitingOrca = proposal.status === 'pending' && proposal.approvedAt !== null
   const statusKey: TranslationKey = awaitingOrca
     ? 'proposal.status.awaiting-orca'
     : `proposal.status.${proposal.status}`
   const statusClass = awaitingOrca ? 'awaiting-orca' : proposal.status
-  const titleKey: TranslationKey =
-    proposal.status === 'applied'
+  const titleKey: TranslationKey = awaitingOrca
+    ? 'proposal.notice.awaitingTitle'
+    : proposal.status === 'applied'
       ? 'proposal.notice.appliedTitle'
-      : awaitingOrca
-        ? 'proposal.notice.awaitingTitle'
-        : 'proposal.notice.pendingTitle'
+      : proposal.status === 'rolled-back'
+        ? 'proposal.notice.rolledBackTitle'
+        : proposal.status === 'partially-rolled-back'
+          ? 'proposal.notice.partiallyRolledBackTitle'
+          : proposal.status === 'changed-after-apply'
+            ? 'proposal.notice.changedAfterApplyTitle'
+            : proposal.status === 'rejected'
+              ? 'proposal.notice.rejectedTitle'
+              : proposal.status === 'failed'
+                ? 'proposal.notice.failedTitle'
+                : 'proposal.notice.pendingTitle'
 
   return (
     <section className={`proposal-summary-banner proposal-summary-${statusClass}`}>
@@ -68,9 +79,9 @@ export function ProposalSummaryBanner({
                 </small>
               )}
             </span>
-            <span>{valueText(proposal.before[key])}</span>
+            <span>{valueText(displayChange.before[key])}</span>
             <ArrowRight aria-hidden="true" size={12} />
-            <span>{valueText(proposal.after[key])}</span>
+            <span>{valueText(displayChange.after[key])}</span>
           </div>
         ))}
       </div>

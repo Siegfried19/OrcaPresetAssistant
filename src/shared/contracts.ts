@@ -38,7 +38,14 @@ export type Language = 'zh-CN' | 'en'
 export type ThreeMfPolicy = 'always' | 'ask' | 'never'
 export type CodexPermissionScope = 'general' | 'current-settings' | 'current-project'
 export type ChangeDestination = 'current-project' | 'update-current-preset' | 'save-as-new-preset'
-export type ChangeProposalStatus = 'pending' | 'applied' | 'rejected' | 'failed' | 'rolled-back'
+export type ChangeProposalStatus =
+  | 'pending'
+  | 'applied'
+  | 'rejected'
+  | 'failed'
+  | 'partially-rolled-back'
+  | 'changed-after-apply'
+  | 'rolled-back'
 export type ParameterValue = string | number | boolean | readonly ParameterValue[] | null
 export type ParameterSnapshot = Readonly<Record<string, ParameterValue>>
 export type ParameterValueShape = 'scalar' | 'scalar-or-vector'
@@ -264,6 +271,7 @@ export interface ChangeProposalView {
   readonly newPresetName: string | null
   readonly before: ParameterSnapshot
   readonly after: ParameterSnapshot
+  readonly currentValues?: ParameterSnapshot | null
   readonly reason: string
   readonly status: ChangeProposalStatus
   readonly requestedRevision: string

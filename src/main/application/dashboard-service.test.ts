@@ -283,6 +283,89 @@ describe('DashboardService native proposal targets', () => {
     )
   })
 
+  it('syncs an applied proposal with partial and complete native Undo state', async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'orca-service-userdata-'))
+    const workspace = await mkdtemp(join(tmpdir(), 'orca-service-workspace-'))
+    roots.push(userData, workspace)
+    const paths = await ensureWorkspaceRoot(workspace)
+    const name = 'Undo-aware Process'
+    await writeFile(
+      join(paths.userPresets, 'process', `${name}.json`),
+      `${JSON.stringify({ name, print_settings_id: name, inherits: '0.20mm Standard' })}\n`,
+      'utf8',
+    )
+
+    const service = new DashboardService(userData)
+    await service.initialize()
+    const snapshot = await service.setRoot(workspace)
+    await service.setCodexScope('current-settings')
+    const preset = snapshot.presets.find((candidate) => candidate.name === name)
+    expect(preset).toBeDefined()
+    const selections = {
+      machine: identity('Machine', true),
+      process: identity(name, false),
+      filaments: [identity('PLA', true)],
+    }
+    await service.publishNativeState({
+      revision: 1,
+      writeCapabilities,
+      selections,
+      settings: { layer_height: '0.18', support_interface_speed: '30' },
+    })
+    const proposal = await service.queueChangeProposal({
+      destination: 'current-project',
+      presetKind: 'process',
+      presetId: preset!.id,
+      before: { layer_height: '0.18', support_interface_speed: '30' },
+      after: { layer_height: '0.20', support_interface_speed: '20' },
+      reason: 'Synchronize Orca native Undo with the proposal card',
+      requestedRevision: '1',
+    })
+    await service.approveChangeProposal({ id: proposal.id, destination: 'current-project' })
+    await service.completeChangeProposal({
+      id: proposal.id,
+      receipt: {
+        authority: 'orca',
+        status: 'applied',
+        revision: '2',
+        before: proposal.before,
+        after: proposal.after,
+        rollbackGuard: { id: 'guard-1', validAtRevision: '2' },
+      },
+    })
+
+    await service.publishNativeState({
+      revision: 3,
+      writeCapabilities,
+      selections,
+      settings: { layer_height: '0.18', support_interface_speed: '20' },
+    })
+    await expect(service.listChangeProposals()).resolves.toContainEqual(
+      expect.objectContaining({
+        id: proposal.id,
+        status: 'partially-rolled-back',
+        authoritativeRevision: '3',
+        rollbackGuard: null,
+        currentValues: { layer_height: '0.18', support_interface_speed: '20' },
+      }),
+    )
+
+    await service.publishNativeState({
+      revision: 4,
+      writeCapabilities,
+      selections,
+      settings: { layer_height: '0.18', support_interface_speed: '30' },
+    })
+    await expect(service.listChangeProposals()).resolves.toContainEqual(
+      expect.objectContaining({
+        id: proposal.id,
+        status: 'rolled-back',
+        authoritativeRevision: '4',
+        currentValues: { layer_height: '0.18', support_interface_speed: '30' },
+      }),
+    )
+  })
+
   it('fails an orphaned approval instead of leaving invalid approve and reject actions visible', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-10T12:00:00.000Z'))

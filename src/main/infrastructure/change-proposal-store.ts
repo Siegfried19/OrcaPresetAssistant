@@ -66,6 +66,14 @@ function snapshotsDescribeChange(before: ParameterSnapshot, after: ParameterSnap
   )
 }
 
+function snapshotsHaveSameKeys(left: ParameterSnapshot, right: ParameterSnapshot): boolean {
+  const leftKeys = Object.keys(left).sort()
+  const rightKeys = Object.keys(right).sort()
+  return (
+    leftKeys.length === rightKeys.length && leftKeys.every((key, index) => key === rightKeys[index])
+  )
+}
+
 function isRollbackGuard(value: unknown): boolean {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const guard = value as Record<string, unknown>
@@ -149,6 +157,7 @@ function isProposal(value: unknown): value is ChangeProposalView {
   const status = String(proposal.status)
   const before = proposal.before
   const after = proposal.after
+  const currentValues = proposal.currentValues
   return (
     typeof proposal.id === 'string' &&
     Boolean(proposal.id) &&
@@ -174,7 +183,21 @@ function isProposal(value: unknown): value is ChangeProposalView {
     typeof proposal.reason === 'string' &&
     Boolean(proposal.reason.trim()) &&
     proposal.reason.length <= 2_000 &&
-    ['pending', 'applied', 'rejected', 'failed', 'rolled-back'].includes(status) &&
+    [
+      'pending',
+      'applied',
+      'rejected',
+      'failed',
+      'partially-rolled-back',
+      'changed-after-apply',
+      'rolled-back',
+    ].includes(status) &&
+    (currentValues === undefined ||
+      currentValues === null ||
+      (isParameterSnapshot(currentValues) && snapshotsHaveSameKeys(before, currentValues))) &&
+    (status === 'partially-rolled-back' || status === 'changed-after-apply'
+      ? isParameterSnapshot(currentValues)
+      : true) &&
     typeof proposal.requestedRevision === 'string' &&
     Boolean(proposal.requestedRevision) &&
     proposal.requestedRevision.length <= 256 &&
@@ -183,10 +206,18 @@ function isProposal(value: unknown): value is ChangeProposalView {
         Boolean(proposal.authoritativeRevision) &&
         proposal.authoritativeRevision.length <= 256)) &&
     (status === 'pending' ? proposal.authoritativeRevision === null : true) &&
-    (status === 'applied' || status === 'failed' || status === 'rolled-back'
+    (status === 'applied' ||
+    status === 'failed' ||
+    status === 'partially-rolled-back' ||
+    status === 'changed-after-apply' ||
+    status === 'rolled-back'
       ? typeof proposal.authoritativeRevision === 'string'
       : true) &&
-    (status === 'applied' || status === 'failed' || status === 'rolled-back'
+    (status === 'applied' ||
+    status === 'failed' ||
+    status === 'partially-rolled-back' ||
+    status === 'changed-after-apply' ||
+    status === 'rolled-back'
       ? typeof proposal.approvedAt === 'string'
       : true) &&
     (proposal.rollbackGuard === null ||
@@ -339,6 +370,7 @@ export class ChangeProposalStore {
         request.destination === 'save-as-new-preset' ? request.newPresetName?.trim() || null : null,
       before: request.before,
       after: request.after,
+      currentValues: null,
       reason: request.reason.trim(),
       status: 'pending',
       requestedRevision: request.requestedRevision,
@@ -406,7 +438,79 @@ export class ChangeProposalStore {
       status: receipt.status,
       authoritativeRevision: receipt.revision,
       rollbackGuard: receipt.status === 'applied' ? (receipt.rollbackGuard ?? null) : null,
+      currentValues: receipt.status === 'rolled-back' ? existing.before : null,
       error: receipt.error?.trim() || null,
+    }
+    const proposals = [...document.proposals]
+    proposals[index] = updated
+    await this.write({ schemaVersion: 1, proposals })
+    return updated
+  }
+
+  public async reconcileNativeState(
+    id: string,
+    revision: string,
+    currentValues: ParameterSnapshot,
+  ): Promise<ChangeProposalView> {
+    if (
+      typeof id !== 'string' ||
+      !id ||
+      typeof revision !== 'string' ||
+      !revision ||
+      !isParameterSnapshot(currentValues)
+    ) {
+      throw new Error('invalid-authoritative-receipt')
+    }
+    const document = await this.read()
+    const index = document.proposals.findIndex((proposal) => proposal.id === id)
+    const existing = document.proposals[index]
+    if (!existing) throw new Error('change-proposal-not-found')
+    if (
+      existing.approvedAt === null ||
+      !['applied', 'partially-rolled-back', 'changed-after-apply', 'rolled-back'].includes(
+        existing.status,
+      ) ||
+      !snapshotsHaveSameKeys(existing.before, currentValues)
+    ) {
+      throw new Error('invalid-authoritative-receipt')
+    }
+
+    const changedKeys = Object.keys(existing.after).filter(
+      (key) => !parameterValuesEqual(existing.before[key]!, existing.after[key]!),
+    )
+    const restoredCount = changedKeys.filter((key) =>
+      parameterValuesEqual(currentValues[key]!, existing.before[key]!),
+    ).length
+    const appliedCount = changedKeys.filter((key) =>
+      parameterValuesEqual(currentValues[key]!, existing.after[key]!),
+    ).length
+    const status: ChangeProposalView['status'] =
+      restoredCount === changedKeys.length
+        ? 'rolled-back'
+        : restoredCount > 0
+          ? 'partially-rolled-back'
+          : appliedCount === changedKeys.length
+            ? 'applied'
+            : 'changed-after-apply'
+
+    if (
+      existing.status === status &&
+      existing.authoritativeRevision === revision &&
+      existing.rollbackGuard === null &&
+      existing.currentValues &&
+      parameterSnapshotsEqual(existing.currentValues, currentValues)
+    ) {
+      return existing
+    }
+
+    const updated: ChangeProposalView = {
+      ...existing,
+      updatedAt: new Date().toISOString(),
+      status,
+      authoritativeRevision: revision,
+      rollbackGuard: null,
+      currentValues,
+      error: null,
     }
     const proposals = [...document.proposals]
     proposals[index] = updated

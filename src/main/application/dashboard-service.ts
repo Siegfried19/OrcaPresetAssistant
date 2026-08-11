@@ -390,6 +390,7 @@ export class DashboardService {
       request,
     )
     await this.reconcileApprovedProposals(published)
+    await this.reconcileCompletedProposals(published)
     return published
   }
 
@@ -734,6 +735,51 @@ export class DashboardService {
               }),
         },
       })
+    }
+  }
+
+  private async reconcileCompletedProposals(state: PublishedNativeState): Promise<void> {
+    if (!state.settings) return
+
+    const proposals = await this.proposalStore.list()
+    for (const proposal of proposals) {
+      if (
+        proposal.approvedAt === null ||
+        !['applied', 'partially-rolled-back', 'changed-after-apply', 'rolled-back'].includes(
+          proposal.status,
+        ) ||
+        proposal.authoritativeRevision === state.revision
+      ) {
+        continue
+      }
+
+      const localPreset = this.presets.find((preset) => preset.id === proposal.presetId)
+      const nativePrefix = `orca:${proposal.presetKind}:`
+      const originalName =
+        localPreset?.name ??
+        (proposal.presetId.startsWith(nativePrefix)
+          ? proposal.presetId.slice(nativePrefix.length)
+          : proposal.presetId)
+      const expectedName =
+        proposal.destination === 'save-as-new-preset' ? proposal.newPresetName : originalName
+      const selectedNames =
+        proposal.presetKind === 'process'
+          ? [state.selections.process.name]
+          : state.selections.filaments.map((filament) => filament.name)
+      if (!expectedName || !selectedNames.includes(expectedName)) continue
+
+      const currentValues: Record<string, (typeof proposal.after)[string]> = {}
+      let complete = true
+      for (const key of Object.keys(proposal.after)) {
+        if (!Object.prototype.hasOwnProperty.call(state.settings, key)) {
+          complete = false
+          break
+        }
+        currentValues[key] = state.settings[key]!
+      }
+      if (!complete) continue
+
+      await this.proposalStore.reconcileNativeState(proposal.id, state.revision, currentValues)
     }
   }
 }

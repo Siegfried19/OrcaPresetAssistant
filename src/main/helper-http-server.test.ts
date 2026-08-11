@@ -29,9 +29,11 @@ describe('helper HTTP server', () => {
     await writeFile(join(root, 'assets', 'app.js'), 'export {}', 'utf8')
     const getSnapshot = vi.fn(async () => ({ marker: 'snapshot' }))
     const completeChangeProposal = vi.fn(async () => ({ status: 'applied' }))
+    const publishNativeState = vi.fn(async () => ({ source: 'orca-native' }))
     const service = {
       getSnapshot,
       completeChangeProposal,
+      publishNativeState,
     } as unknown as DashboardService
     const token = '12345678901234567890123456789012'
     const server = await startHelperHttpServer({
@@ -104,6 +106,25 @@ describe('helper HTTP server', () => {
       )
       expect(allowedInternal.status).toBe(200)
       expect(completeChangeProposal).toHaveBeenCalledOnce()
+
+      const publishedState = await post(
+        server.origin,
+        HELPER_HTTP_ROUTES.publishNativeState,
+        token,
+        {
+          revision: 1,
+          selections: {},
+          writeCapabilities: {},
+          settings: {},
+        },
+        {
+          [HELPER_HTTP_NATIVE_BRIDGE_HEADER]: HELPER_HTTP_NATIVE_BRIDGE_VALUE,
+        },
+      )
+      expect(publishedState.status).toBe(200)
+      expect(publishNativeState).toHaveBeenCalledWith(
+        expect.objectContaining({ revision: 1, writeCapabilities: {} }),
+      )
     } finally {
       await server.close()
     }

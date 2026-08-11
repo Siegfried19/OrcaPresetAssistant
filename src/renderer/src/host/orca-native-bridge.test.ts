@@ -3,13 +3,28 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   applyOrcaProposal,
   exportOrcaProjectCopy,
+  isOrcaRevisionConflict,
   parseNativeEnvelope,
   readOrcaProject,
+  readOrcaSettings,
   resolveOrcaNativeBridge,
   rollbackOrcaProposal,
 } from './orca-native-bridge'
 
 describe('Orca native bridge boundary', () => {
+  it('recognizes a native revision conflict without matching error text', () => {
+    expect(
+      isOrcaRevisionConflict(
+        Object.assign(new Error('localized message'), { code: 'REVISION_CONFLICT' }),
+      ),
+    ).toBe(true)
+    expect(
+      isOrcaRevisionConflict(
+        Object.assign(new Error('Native state revision is stale'), { code: 'OTHER' }),
+      ),
+    ).toBe(false)
+  })
+
   it('accepts only an available versioned bridge surface', () => {
     const request = vi.fn()
     expect(
@@ -163,5 +178,38 @@ describe('Orca native bridge boundary', () => {
     expect(request).toHaveBeenCalledWith('project.get', {
       authorization: 'project:geometry',
     })
+  })
+
+  it('reads effective settings without duplicating the state capability catalog', async () => {
+    const identity = {
+      name: 'Preset',
+      isSystem: false,
+      isUser: true,
+      isDefault: false,
+      isExternal: true,
+      isProjectEmbedded: false,
+      isDirty: false,
+      canOverwrite: true,
+    }
+    const request = vi.fn().mockResolvedValue({
+      requestId: 'settings-1',
+      ok: true,
+      revision: 15,
+      data: {
+        presets: {
+          machine: { ...identity, name: 'Machine', isSystem: true, isUser: false },
+          process: { ...identity, name: 'Process' },
+          filaments: [{ ...identity, name: 'Filament' }],
+        },
+        effective: { layer_height: '0.18' },
+      },
+    })
+
+    await expect(
+      readOrcaSettings({ available: true, revision: 15, request }),
+    ).resolves.toMatchObject({
+      data: { effective: { layer_height: '0.18' } },
+    })
+    expect(request).toHaveBeenCalledWith('settings.get', { authorization: 'settings:read' })
   })
 })

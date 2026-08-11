@@ -19,6 +19,7 @@ import {
   applyOrcaProposal,
   errorText,
   exportOrcaProjectCopy,
+  isOrcaRevisionConflict,
   parsePrintSubmitted,
   readPendingOrcaPrint,
   readOrcaProject,
@@ -328,7 +329,7 @@ class OrcaDashboardApi implements DashboardApi {
       const state = await readOrcaState(this.bridge)
       let revision = state.revision
       let selections = state.data.presets
-      let writeCapabilities = state.data.writeCapabilities
+      const writeCapabilities = state.data.writeCapabilities
       let settings
       let project
 
@@ -336,7 +337,8 @@ class OrcaDashboardApi implements DashboardApi {
         const nativeSettings = await readOrcaSettings(this.bridge)
         revision = nativeSettings.revision
         selections = nativeSettings.data.presets
-        writeCapabilities = nativeSettings.data.writeCapabilities
+        // Keep the catalog from state.get. Duplicating it in settings.get can push
+        // the WebView response past its practical message-size boundary.
         settings = nativeSettings.data.effective
       }
       if (scope === 'current-project') {
@@ -358,7 +360,10 @@ class OrcaDashboardApi implements DashboardApi {
       )
       if (
         snapshot.changeProposals.some(
-          (proposal) => proposal.status === 'pending' && proposal.approvedAt !== null,
+          (proposal) =>
+            proposal.approvedAt !== null &&
+            !['rejected', 'failed'].includes(proposal.status) &&
+            proposal.authoritativeRevision !== String(revision),
         )
       ) {
         this.emit(await this.track(await this.helper.refresh()))
@@ -553,11 +558,24 @@ class OrcaDashboardApi implements DashboardApi {
     }
 
     const expectedRevision = requestedNativeRevision(proposal.rollbackGuard.validAtRevision)
-    const response = await rollbackOrcaProposal(
-      this.bridge,
-      proposal.rollbackGuard.id,
-      expectedRevision,
-    )
+    let response
+    try {
+      response = await rollbackOrcaProposal(
+        this.bridge,
+        proposal.rollbackGuard.id,
+        expectedRevision,
+      )
+    } catch (error) {
+      if (!isOrcaRevisionConflict(error)) throw error
+      await this.publishNativeState()
+      const refreshed = await this.track(await this.helper.refresh())
+      this.emit(refreshed)
+      const reconciled = refreshed.changeProposals.find((candidate) => candidate.id === id)
+      if (reconciled && (reconciled.status !== 'applied' || reconciled.rollbackGuard === null)) {
+        return reconciled
+      }
+      throw error
+    }
     if (
       !parameterSnapshotsEqual(response.data.before, proposal.after) ||
       !parameterSnapshotsEqual(response.data.after, proposal.before)

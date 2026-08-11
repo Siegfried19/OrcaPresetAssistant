@@ -260,7 +260,13 @@ async function invokeRoute(
       return null
     case HELPER_HTTP_ROUTES.publishNativeState:
       return service.publishNativeState(
-        objectBody(body, ['revision', 'selections', 'settings', 'project']) as never,
+        objectBody(body, [
+          'revision',
+          'selections',
+          'writeCapabilities',
+          'settings',
+          'project',
+        ]) as never,
       )
     case HELPER_HTTP_ROUTES.prepareProjectExport: {
       const value = objectBody(body, ['archiveId', 'explicitConsent'])

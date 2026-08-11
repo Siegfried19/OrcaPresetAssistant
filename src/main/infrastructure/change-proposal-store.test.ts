@@ -182,6 +182,76 @@ describe('change proposal store', () => {
     })
   })
 
+  it('reconciles native full undo, partial undo, redo, and later manual values', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-proposals-'))
+    temporaryRoots.push(root)
+    const store = new ChangeProposalStore(root)
+    const proposal = await store.queue({
+      destination: 'current-project',
+      presetKind: 'process',
+      presetId: 'process:quality',
+      before: { layer_height: 0.18, support_interface_speed: 30 },
+      after: { layer_height: 0.2, support_interface_speed: 20 },
+      reason: 'Track Orca native undo and redo',
+      requestedRevision: '1',
+    })
+    await store.approve({ id: proposal.id, destination: 'current-project' })
+    await store.complete({
+      id: proposal.id,
+      receipt: {
+        authority: 'orca',
+        status: 'applied',
+        revision: '2',
+        before: proposal.before,
+        after: proposal.after,
+        rollbackGuard: { id: 'guard-1', validAtRevision: '2' },
+      },
+    })
+
+    await expect(
+      store.reconcileNativeState(proposal.id, '3', {
+        layer_height: 0.18,
+        support_interface_speed: 20,
+      }),
+    ).resolves.toMatchObject({
+      status: 'partially-rolled-back',
+      authoritativeRevision: '3',
+      rollbackGuard: null,
+      currentValues: { layer_height: 0.18, support_interface_speed: 20 },
+    })
+
+    await expect(
+      store.reconcileNativeState(proposal.id, '4', {
+        layer_height: 0.18,
+        support_interface_speed: 30,
+      }),
+    ).resolves.toMatchObject({
+      status: 'rolled-back',
+      currentValues: { layer_height: 0.18, support_interface_speed: 30 },
+    })
+
+    await expect(
+      store.reconcileNativeState(proposal.id, '5', {
+        layer_height: 0.2,
+        support_interface_speed: 20,
+      }),
+    ).resolves.toMatchObject({
+      status: 'applied',
+      rollbackGuard: null,
+      currentValues: { layer_height: 0.2, support_interface_speed: 20 },
+    })
+
+    await expect(
+      store.reconcileNativeState(proposal.id, '6', {
+        layer_height: 0.19,
+        support_interface_speed: 20,
+      }),
+    ).resolves.toMatchObject({
+      status: 'changed-after-apply',
+      currentValues: { layer_height: 0.19, support_interface_speed: 20 },
+    })
+  })
+
   it('filters persisted records that do not satisfy the complete proposal schema', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-proposals-'))
     temporaryRoots.push(root)

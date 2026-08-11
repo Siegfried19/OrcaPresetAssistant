@@ -8,7 +8,7 @@
 
 Orca Preset Assistant 是嵌入 OrcaSlicer 主窗口的用户预设与打印历史工作台。日常使用只需要 Orca 和 Codex 两个窗口：Orca 继续负责模型、切片、设备和打印，助手面板负责预设审阅、受控写入与打印结果归档。
 
-> 当前状态：Windows 早期预览版。核心流程和自动化测试已经建立，真实打印、不同显示缩放和 Orca 升级兼容仍需持续验证。[v0.5.0 Release](https://github.com/Siegfried19/OrcaPresetAssistant/releases/tag/v0.5.0) 提供独立便携面板；完整日常体验仍需使用带原生集成的定制 Orca 构建。
+> 当前状态：Windows 早期预览版。核心流程和自动化测试已经建立，真实打印、不同显示缩放和 Orca 升级兼容仍需持续验证。[v0.6.3 Release](https://github.com/Siegfried19/OrcaPresetAssistant/releases/tag/v0.6.3) 同时提供完整定制 Orca、独立便携面板和 Codex 插件。
 
 ![Orca Preset Assistant 中文界面](./docs/images/dashboard-zh.png)
 
@@ -49,8 +49,9 @@ Orca Preset Assistant 是嵌入 OrcaSlicer 主窗口的用户预设与打印历�
 
 ### 下载与使用
 
-- [下载 Windows x64 便携版](https://github.com/Siegfried19/OrcaPresetAssistant/releases/download/v0.5.0/OrcaPresetAssistant-0.5.0-portable.exe)
-- [查看 v0.5.0 发布说明](https://github.com/Siegfried19/OrcaPresetAssistant/releases/tag/v0.5.0)
+- [下载完整定制 Orca Windows x64 压缩包](https://github.com/Siegfried19/OrcaPresetAssistant/releases/download/v0.6.3/OrcaPresetAssistant-Orca-0.6.3-Windows-x64.zip)
+- [下载 Windows x64 独立便携面板](https://github.com/Siegfried19/OrcaPresetAssistant/releases/download/v0.6.3/OrcaPresetAssistant-0.6.3-portable.exe)
+- [查看 v0.6.3 发布说明](https://github.com/Siegfried19/OrcaPresetAssistant/releases/tag/v0.6.3)
 
 便携版无需安装，主要用于独立查看面板、连接工作区和故障排查。它不包含整个定制 OrcaSlicer。完整的内嵌面板、当前项目读取、原生三种写入和自动打印建档需要按照[原生补丁说明](./native/orca/README.md)和[打包说明](./native/orca/PACKAGING.md)构建完整版本。
 
@@ -169,7 +170,7 @@ pnpm package:plugin
 
 Orca Preset Assistant is a user-preset and print-history workspace embedded in the OrcaSlicer main window. Daily use requires only two windows: Orca handles models, slicing, devices, and printing, while Codex helps review presets and propose controlled changes.
 
-> Current status: early Windows preview. The core workflows and automated tests are in place, while physical-print validation, display scaling, and compatibility with future Orca upgrades still require ongoing verification. The [v0.5.0 Release](https://github.com/Siegfried19/OrcaPresetAssistant/releases/tag/v0.5.0) provides the standalone portable panel; the complete daily workflow still requires a custom Orca build with the native integration.
+> Current status: early Windows preview. The core workflows and automated tests are in place, while physical-print validation, display scaling, and compatibility with future Orca upgrades still require ongoing verification. The [v0.6.3 Release](https://github.com/Siegfried19/OrcaPresetAssistant/releases/tag/v0.6.3) includes the full custom Orca build, standalone portable panel, and Codex plugin.
 
 ![Orca Preset Assistant English interface](./docs/images/dashboard-en.png)
 
@@ -210,8 +211,9 @@ Machine presets are currently read-only. Automated Codex writes are limited to p
 
 ### Download and use
 
-- [Download the Windows x64 portable build](https://github.com/Siegfried19/OrcaPresetAssistant/releases/download/v0.5.0/OrcaPresetAssistant-0.5.0-portable.exe)
-- [Read the v0.5.0 release notes](https://github.com/Siegfried19/OrcaPresetAssistant/releases/tag/v0.5.0)
+- [Download the full custom Orca Windows x64 archive](https://github.com/Siegfried19/OrcaPresetAssistant/releases/download/v0.6.3/OrcaPresetAssistant-Orca-0.6.3-Windows-x64.zip)
+- [Download the standalone Windows x64 portable panel](https://github.com/Siegfried19/OrcaPresetAssistant/releases/download/v0.6.3/OrcaPresetAssistant-0.6.3-portable.exe)
+- [Read the v0.6.3 release notes](https://github.com/Siegfried19/OrcaPresetAssistant/releases/tag/v0.6.3)
 
 The portable build requires no installation and is intended for standalone panel review, workspace access, and troubleshooting. It does not include the full custom OrcaSlicer build. The embedded panel, current-project access, three native write destinations, and automatic print archiving require a full build following the [native patch guide](./native/orca/README.md) and [packaging guide](./native/orca/PACKAGING.md).
 

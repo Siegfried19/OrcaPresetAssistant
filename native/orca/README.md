@@ -153,22 +153,19 @@ helper 的打包契约是：`--serve` 绝不能创建 `BrowserWindow`，只能�
 - 英文使用源字符串，简体中文通过 Orca 原生 gettext 目录翻译；
 - 不修改发送协议、不绕过授权，也不会尝试远程切换打印机安全设置。
 
-## 第十二批参数页更新回执
+## 参数页保持 Orca 原生交互
 
-[0012-show-native-parameter-update-notice.patch](patches/0012-show-native-parameter-update-notice.patch)
-把提案写入结果直接反馈到 Orca 的真实 Prepare 参数区域：
+Prepare 参数区域不再插入“当前预设已更新 / 查看修改 / 撤销”横条：
 
-- 仅在 `proposal.apply` 已由 Orca 权威执行并验证成功后显示“当前预设已更新”；
-- 回执位于真实参数分类页签与参数字段之间，显示目标预设、写入位置和修改项数量；
-- “查看修改”使用 Orca 的参数名称和单位展开修改前/修改后明细；
-- “撤销”复用原有 `proposal.rollback` 的 revision/value guard，不会覆盖更新后又被手工修改的值；
-- 永久预设写入完成后 Orca 会清除普通 dirty 状态，因此本回执不依赖字段旁的临时回滚箭头；
-- 撤销成功后保留本次更新的可见记录，并明确标记“本次更新已撤销”。
+- 提案状态、修改前后值和安全回滚入口只保留在 Preset Assistant 面板；
+- Orca 参数页继续使用自身的 dirty 标记、字段复原与 Undo 交互，避免出现多个含义相近的撤销入口；
+- `proposal.apply` 的权威回执、revision 更新和原生数值回读保持不变；
+- 已验证的提案历史可以保留，但不会长期占用切片参数区域。
 
 ## 第十三批普通参数扩展与多值单值广播
 
 [0013-expand-write-whitelist-and-broadcast-scalars.patch](patches/0013-expand-write-whitelist-and-broadcast-scalars.patch)
-在前十二批稳定基线上扩展普通工艺/耗材写入范围，并修复按喷嘴保存的多值参数无法可靠写入的问题：
+在现有原生桥接基线上扩展普通工艺/耗材写入范围，并修复按喷嘴保存的多值参数无法可靠写入的问题：
 
 - 普通工艺白名单扩展到 47 项、普通耗材白名单扩展到 33 项；
 - 插件发送一个合法标量时，由 Orca 原生端读取当前真实值数量并广播到全部现有槽位；
@@ -221,7 +218,7 @@ workspace = D:\OrcaPresetWorkspace
 
 ## 补丁顺序
 
-完整原生验证按编号顺序应用。`0003` 依赖 `0001` 和 `0002`，后续补丁依次依赖前一批：
+完整原生验证按下列顺序应用。`0003` 依赖 `0001` 和 `0002`；已移除的参数页回执补丁不再属于补丁链：
 
 ```powershell
 $patchRoot = (Resolve-Path ".\native\orca\patches").Path
@@ -236,7 +233,6 @@ git apply --check "$patchRoot\0008-fix-helper-handoff-and-protect-workspace.patc
 git apply --check "$patchRoot\0009-follow-orca-language-for-assistant-tab.patch"
 git apply --check "$patchRoot\0010-enable-current-project-geometry-access.patch"
 git apply --check "$patchRoot\0011-explain-bambu-lan-developer-mode.patch"
-git apply --check "$patchRoot\0012-show-native-parameter-update-notice.patch"
 git apply --check "$patchRoot\0013-expand-write-whitelist-and-broadcast-scalars.patch"
 git apply --check "$patchRoot\0014-publish-parameter-visibility-and-verification.patch"
 ```
@@ -252,7 +248,7 @@ git status --short --branch
 $patchRoot = (Resolve-Path ".\native\orca\patches").Path
 git apply --check "$patchRoot\0001-embed-preset-assistant-panel.patch"
 git apply --check "$patchRoot\0002-use-workspace-user-presets-root.patch"
-# 在临时基线上顺序应用 0001→0014；每一步先 check，再应用。
+# 在临时基线上按“补丁顺序”列表应用；每一步先 check，再应用。
 ```
 
 确认检查通过后应用：
@@ -269,7 +265,6 @@ git apply "$patchRoot\0008-fix-helper-handoff-and-protect-workspace.patch"
 git apply "$patchRoot\0009-follow-orca-language-for-assistant-tab.patch"
 git apply "$patchRoot\0010-enable-current-project-geometry-access.patch"
 git apply "$patchRoot\0011-explain-bambu-lan-developer-mode.patch"
-git apply "$patchRoot\0012-show-native-parameter-update-notice.patch"
 git apply "$patchRoot\0013-expand-write-whitelist-and-broadcast-scalars.patch"
 git apply "$patchRoot\0014-publish-parameter-visibility-and-verification.patch"
 ```
@@ -315,10 +310,10 @@ cmake --build build --config Release --target ALL_BUILD -- -m
 10. 在 Orca 原生界面另存一个用户工艺预设，文件出现在 `<workspace>\UserPresets\process`。
 11. 登录或切换 OrcaCloud 账号，外部目录不被删除或改写，日志明确显示用户预设云同步已禁用。
 12. 官方预设仍正常显示，且 Orca 的系统预设目录没有发生变化。
-13. 从助手批准并应用一次 process 或 filament 修改，Prepare 参数区出现“当前预设已更新”。
-14. 展开“查看修改”，参数名称、修改前、修改后和单位与实际写入值一致。
-15. 未继续手工修改时点击“撤销”可恢复原值；之后手工改过任一目标值时，撤销必须拒绝覆盖。
-16. 永久预设写入即使没有字段 dirty 回滚箭头，参数页回执仍然可见。
+13. 从助手批准并应用一次 process 或 filament 修改，助手面板显示原生回执和新 revision 的回读验证结果。
+14. 在 Prepare 参数区使用 Orca 自身的字段复原或 Undo，助手面板自动同步为完全回滚、部分回滚或已在 Orca 中调整。
+15. 使用 Redo 恢复全部修改后，助手面板自动回到“已应用并验证”；revision 冲突只触发权威状态刷新，不向用户显示 stale 错误。
+16. 新提案到达时，首页的单张“最新修改”卡片直接替换旧提案；参数区不会出现助手额外插入的提示或撤销横条。
 
 ## 回退
 
