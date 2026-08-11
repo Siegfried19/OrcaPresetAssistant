@@ -12,7 +12,8 @@
    pnpm quality
    node --test `
      plugins/orca-preset-assistant/server/model-inspector.test.mjs `
-     plugins/orca-preset-assistant/server/server.test.mjs
+     plugins/orca-preset-assistant/server/server.test.mjs `
+     plugins/orca-preset-assistant/server/state.test.mjs
    pnpm package:plugin
    ```
 

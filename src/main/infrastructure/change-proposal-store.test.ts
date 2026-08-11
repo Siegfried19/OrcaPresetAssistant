@@ -124,6 +124,64 @@ describe('change proposal store', () => {
     })
   })
 
+  it('accepts Orca canonical scalar values and enriches a recovered receipt idempotently', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-proposals-'))
+    temporaryRoots.push(root)
+    const store = new ChangeProposalStore(root)
+    const proposal = await store.queue({
+      destination: 'update-current-preset',
+      presetKind: 'process',
+      presetId: 'process:quality',
+      before: { layer_height: '0.18', detect_thin_wall: false },
+      after: { layer_height: '0.20', detect_thin_wall: true },
+      reason: 'Use an Orca-canonical numeric and boolean receipt',
+      requestedRevision: 'revision-1',
+    })
+    await store.approve({ id: proposal.id, destination: 'update-current-preset' })
+
+    await expect(
+      store.complete({
+        id: proposal.id,
+        receipt: {
+          authority: 'orca',
+          status: 'applied',
+          revision: 'revision-2',
+          before: { layer_height: '0.180', detect_thin_wall: '0' },
+          after: { layer_height: '0.2', detect_thin_wall: '1' },
+        },
+      }),
+    ).resolves.toMatchObject({ status: 'applied', rollbackGuard: null })
+
+    await expect(
+      store.complete({
+        id: proposal.id,
+        receipt: {
+          authority: 'orca',
+          status: 'applied',
+          revision: 'revision-2',
+          before: { layer_height: '0.18', detect_thin_wall: false },
+          after: { layer_height: '0.20', detect_thin_wall: true },
+          rollbackGuard: { id: 'guard-2', validAtRevision: 'revision-2' },
+        },
+      }),
+    ).resolves.toMatchObject({
+      status: 'applied',
+      rollbackGuard: { id: 'guard-2', validAtRevision: 'revision-2' },
+    })
+
+    await expect(
+      store.guardRollback({
+        id: proposal.id,
+        currentRevision: 'revision-2',
+        currentValues: { layer_height: '0.200', detect_thin_wall: '1' },
+      }),
+    ).resolves.toEqual({
+      allowed: true,
+      reason: null,
+      changes: { layer_height: '0.18', detect_thin_wall: false },
+    })
+  })
+
   it('filters persisted records that do not satisfy the complete proposal schema', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-proposals-'))
     temporaryRoots.push(root)

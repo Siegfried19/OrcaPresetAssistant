@@ -1,16 +1,17 @@
 # 验证状态
 
-最后更新：2026-07-31
+最后更新：2026-08-10
 
 本页记录当前源码已经验证的事实，以及仍需要真实用户环境确认的项目。它不是稳定版发布声明。
 
 ## 已完成的自动化验证
 
 - TypeScript 类型检查、ESLint、Prettier 和 Vitest 全部通过。
-- 应用测试：61 个通过，1 个按运行环境跳过。
-- Codex 插件的模型检查与 MCP 集成测试：2 个通过。
+- 应用测试：70 个通过，1 个按运行环境跳过。
+- Codex 插件的模型检查、当前项目访问与 MCP 集成测试：3 个通过。
 - Codex 插件通过插件规范校验，独立 Release ZIP 可生成并包含 Marketplace 清单、插件和双语说明。
-- Orca 原生 `[PresetAssistant]` 测试：11 个用例、73 个断言通过。
+- Orca 原生 `[PresetAssistant]` 测试：12 个用例、86 个断言通过。
+- Orca 补丁 0001→0013 已从干净产品基线顺序通过 `git apply --check --whitespace=error-all` 并完整重放；最终原生桥源码与实际构建版本一致。
 - Windows portable 面板与完整 unpacked helper 成功构建。
 - 定制 Orca Release 构建成功，面板可从 Orca 主窗口启动。
 - helper 只监听 `127.0.0.1`；错误 token 返回 401，错误 Origin 返回 403。
@@ -32,6 +33,7 @@
 - 检查常用 Windows 缩放比例、明暗主题和中英文界面。
 - 在新的 Orca 上游版本上重放补丁并完成回归验证。
 - 在实际面板中手工完成一次“启用本地版本 → 保存版本 → 修改预设 → 恢复旧版本”的端到端验收。
+- 在修复版实际面板批准一次多值参数标量写入，确认 `support_interface_speed: 20` 由 Orca 权威回执为当前真实槽位数量，并同时写入 `support_interface_loop_pattern: true`。
 
 ## 验证命令
 
@@ -40,7 +42,8 @@ pnpm install --frozen-lockfile
 pnpm quality
 node --test `
   plugins/orca-preset-assistant/server/model-inspector.test.mjs `
-  plugins/orca-preset-assistant/server/server.test.mjs
+  plugins/orca-preset-assistant/server/server.test.mjs `
+  plugins/orca-preset-assistant/server/state.test.mjs
 pnpm package:plugin
 ```
 

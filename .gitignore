@@ -2,6 +2,7 @@ node_modules/
 .tsbuild/
 out/
 release/
+/release-*/
 /FullVersion/
 coverage/
 .runtime-smoke/

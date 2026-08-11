@@ -22,6 +22,7 @@ vi.mock('electron', () => ({
 const roots: string[] = []
 
 afterEach(async () => {
+  vi.useRealTimers()
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
@@ -188,5 +189,120 @@ describe('DashboardService native proposal targets', () => {
         requestedRevision: '12',
       }),
     ).rejects.toThrow('invalid-change-proposal')
+  })
+
+  it('recovers an approved proposal when a newer authoritative Orca state has its values', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-10T12:00:00.000Z'))
+    const userData = await mkdtemp(join(tmpdir(), 'orca-service-userdata-'))
+    const workspace = await mkdtemp(join(tmpdir(), 'orca-service-workspace-'))
+    roots.push(userData, workspace)
+    const paths = await ensureWorkspaceRoot(workspace)
+    const name = 'Recoverable Process'
+    await writeFile(
+      join(paths.userPresets, 'process', `${name}.json`),
+      `${JSON.stringify({ name, print_settings_id: name, inherits: '0.20mm Standard' })}\n`,
+      'utf8',
+    )
+
+    const service = new DashboardService(userData)
+    await service.initialize()
+    const snapshot = await service.setRoot(workspace)
+    await service.setCodexScope('current-settings')
+    const preset = snapshot.presets.find((candidate) => candidate.name === name)
+    expect(preset).toBeDefined()
+    await service.publishNativeState({
+      revision: 12,
+      selections: {
+        machine: identity('Machine', true),
+        process: identity(name, false),
+        filaments: [identity('PLA', true)],
+      },
+      settings: { layer_height: '0.18' },
+    })
+    const proposal = await service.queueChangeProposal({
+      destination: 'update-current-preset',
+      presetKind: 'process',
+      presetId: preset!.id,
+      before: { layer_height: '0.18' },
+      after: { layer_height: '0.20' },
+      reason: 'Recover an authoritative result after receipt persistence was interrupted',
+      requestedRevision: '12',
+    })
+    await service.approveChangeProposal({
+      id: proposal.id,
+      destination: 'update-current-preset',
+    })
+    vi.advanceTimersByTime(11_000)
+
+    await service.publishNativeState({
+      revision: 13,
+      selections: {
+        machine: identity('Machine', true),
+        process: identity(name, false),
+        filaments: [identity('PLA', true)],
+      },
+      settings: { layer_height: '0.2' },
+    })
+
+    await expect(service.listChangeProposals()).resolves.toContainEqual(
+      expect.objectContaining({
+        id: proposal.id,
+        status: 'applied',
+        authoritativeRevision: '13',
+      }),
+    )
+  })
+
+  it('fails an orphaned approval instead of leaving invalid approve and reject actions visible', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-10T12:00:00.000Z'))
+    const userData = await mkdtemp(join(tmpdir(), 'orca-service-userdata-'))
+    const workspace = await mkdtemp(join(tmpdir(), 'orca-service-workspace-'))
+    roots.push(userData, workspace)
+    const paths = await ensureWorkspaceRoot(workspace)
+    const name = 'Orphaned Process'
+    await writeFile(
+      join(paths.userPresets, 'process', `${name}.json`),
+      `${JSON.stringify({ name, print_settings_id: name, inherits: '0.20mm Standard' })}\n`,
+      'utf8',
+    )
+
+    const service = new DashboardService(userData)
+    await service.initialize()
+    const snapshot = await service.setRoot(workspace)
+    await service.setCodexScope('current-settings')
+    const preset = snapshot.presets.find((candidate) => candidate.name === name)
+    expect(preset).toBeDefined()
+    const proposal = await service.queueChangeProposal({
+      destination: 'current-project',
+      presetKind: 'process',
+      presetId: preset!.id,
+      before: { layer_height: '0.18' },
+      after: { layer_height: '0.20' },
+      reason: 'Stop waiting when the approved result is absent from a later Orca state',
+      requestedRevision: '12',
+    })
+    await service.approveChangeProposal({ id: proposal.id, destination: 'current-project' })
+    vi.advanceTimersByTime(11_000)
+
+    await service.publishNativeState({
+      revision: 1,
+      selections: {
+        machine: identity('Machine', true),
+        process: identity(name, false),
+        filaments: [identity('PLA', true)],
+      },
+      settings: { layer_height: '0.18' },
+    })
+
+    await expect(service.listChangeProposals()).resolves.toContainEqual(
+      expect.objectContaining({
+        id: proposal.id,
+        status: 'failed',
+        authoritativeRevision: '1',
+        error: "The approved change is not present in Orca's current settings.",
+      }),
+    )
   })
 })

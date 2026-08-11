@@ -7,6 +7,7 @@ import type {
   DashboardWarning,
 } from '@shared/contracts'
 import type { AuthoritativeChangeReceipt } from '@shared/helper-http'
+import { parameterSnapshotsEqual } from '@shared/parameter-comparison'
 
 import {
   consumeHelperSession,
@@ -352,6 +353,13 @@ class OrcaDashboardApi implements DashboardApi {
         },
         { nativeBridge: true },
       )
+      if (
+        snapshot.changeProposals.some(
+          (proposal) => proposal.status === 'pending' && proposal.approvedAt !== null,
+        )
+      ) {
+        this.emit(await this.track(await this.helper.refresh()))
+      }
       if (snapshot.settings.autoArchive) {
         const pending = await readPendingOrcaPrint(this.bridge)
         if (pending.data) await this.archiveOrcaPrint(pending.data, snapshot)
@@ -496,24 +504,33 @@ class OrcaDashboardApi implements DashboardApi {
       )
     }
 
-    return this.client.request(
-      'completeChangeProposal',
-      {
-        id: approved.id,
-        receipt: {
-          authority: 'orca',
-          status: 'applied',
-          revision: String(response.revision),
-          before: response.data.before,
-          after: response.data.after,
-          rollbackGuard: {
-            id: response.data.rollbackGuard.id,
-            validAtRevision: String(response.data.rollbackGuard.validAtRevision),
+    try {
+      return await this.client.request(
+        'completeChangeProposal',
+        {
+          id: approved.id,
+          receipt: {
+            authority: 'orca',
+            status: 'applied',
+            revision: String(response.revision),
+            before: response.data.before,
+            after: response.data.after,
+            rollbackGuard: {
+              id: response.data.rollbackGuard.id,
+              validAtRevision: String(response.data.rollbackGuard.validAtRevision),
+            },
           },
         },
-      },
-      { nativeBridge: true },
-    )
+        { nativeBridge: true },
+      )
+    } catch (error) {
+      try {
+        this.emit(await this.track(await this.helper.refresh()))
+      } catch {
+        // Approval is durable; keep the panel in its authoritative pending state.
+      }
+      throw error
+    }
   }
 
   public rejectChangeProposal(id: string): Promise<ChangeProposalView> {
@@ -539,8 +556,8 @@ class OrcaDashboardApi implements DashboardApi {
       expectedRevision,
     )
     if (
-      JSON.stringify(response.data.before) !== JSON.stringify(proposal.after) ||
-      JSON.stringify(response.data.after) !== JSON.stringify(proposal.before)
+      !parameterSnapshotsEqual(response.data.before, proposal.after) ||
+      !parameterSnapshotsEqual(response.data.after, proposal.before)
     ) {
       throw new Error('invalid-orca-native-response')
     }

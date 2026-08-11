@@ -165,6 +165,17 @@ helper 的打包契约是：`--serve` 绝不能创建 `BrowserWindow`，只能�
 - 永久预设写入完成后 Orca 会清除普通 dirty 状态，因此本回执不依赖字段旁的临时回滚箭头；
 - 撤销成功后保留本次更新的可见记录，并明确标记“本次更新已撤销”。
 
+## 第十三批普通参数扩展与多值单值广播
+
+[0013-expand-write-whitelist-and-broadcast-scalars.patch](patches/0013-expand-write-whitelist-and-broadcast-scalars.patch)
+在前十二批稳定基线上扩展普通工艺/耗材写入范围，并修复按喷嘴保存的多值参数无法可靠写入的问题：
+
+- 普通工艺白名单扩展到 47 项、普通耗材白名单扩展到 33 项；
+- 插件发送一个合法标量时，由 Orca 原生端读取当前真实值数量并广播到全部现有槽位；
+- 显式发送多个值时仍必须与当前数量一致，不能新增或删除喷嘴槽位；
+- 能力声明明确返回 `scalarBehavior: broadcast-to-current-value-count`；
+- 数量不匹配错误会显示期望数量和实际收到的数量。
+
 ## URL 配置
 
 默认页面：
@@ -215,6 +226,7 @@ git apply --check "$patchRoot\0009-follow-orca-language-for-assistant-tab.patch"
 git apply --check "$patchRoot\0010-enable-current-project-geometry-access.patch"
 git apply --check "$patchRoot\0011-explain-bambu-lan-developer-mode.patch"
 git apply --check "$patchRoot\0012-show-native-parameter-update-notice.patch"
+git apply --check "$patchRoot\0013-expand-write-whitelist-and-broadcast-scalars.patch"
 ```
 
 不能在未应用前一批的原始源树上单独检查后续补丁。产品仓库验证使用临时导出的 Orca 基线依次应用前置补丁，不改动用户日常 Orca 安装。
@@ -228,7 +240,7 @@ git status --short --branch
 $patchRoot = (Resolve-Path ".\native\orca\patches").Path
 git apply --check "$patchRoot\0001-embed-preset-assistant-panel.patch"
 git apply --check "$patchRoot\0002-use-workspace-user-presets-root.patch"
-# 在临时基线上顺序应用 0001→0012；每一步先 check，再应用。
+# 在临时基线上顺序应用 0001→0013；每一步先 check，再应用。
 ```
 
 确认检查通过后应用：
@@ -246,6 +258,7 @@ git apply "$patchRoot\0009-follow-orca-language-for-assistant-tab.patch"
 git apply "$patchRoot\0010-enable-current-project-geometry-access.patch"
 git apply "$patchRoot\0011-explain-bambu-lan-developer-mode.patch"
 git apply "$patchRoot\0012-show-native-parameter-update-notice.patch"
+git apply "$patchRoot\0013-expand-write-whitelist-and-broadcast-scalars.patch"
 ```
 
 应用后先核对范围：

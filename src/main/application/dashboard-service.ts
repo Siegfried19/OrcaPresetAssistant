@@ -32,6 +32,7 @@ import type {
   PublishNativeStateRequest,
   PublishedNativeState,
 } from '@shared/helper-http'
+import { parameterSnapshotsEqual } from '@shared/parameter-comparison'
 
 import type { AppConfig, InternalPreset, RootResolution } from '../domain/models'
 import { isPrintResult } from '../domain/preset-rules'
@@ -70,6 +71,8 @@ interface RefreshResult {
   readonly snapshot: DashboardSnapshot
   readonly changed: boolean
 }
+
+const PROPOSAL_RECONCILIATION_GRACE_MS = 10_000
 
 function appError(code: AppErrorCode): Error {
   return new Error(code)
@@ -382,10 +385,12 @@ export class DashboardService {
   public async publishNativeState(
     request: PublishNativeStateRequest,
   ): Promise<PublishedNativeState> {
-    return this.nativeStateStore.publish(
+    const published = await this.nativeStateStore.publish(
       this.sessionCodexScope ?? this.config.codexPermissions.scope,
       request,
     )
+    await this.reconcileApprovedProposals(published)
+    return published
   }
 
   public async prepareProjectExport(
@@ -666,6 +671,67 @@ export class DashboardService {
       throw appError('invalid-change-proposal')
     }
     return preset
+  }
+
+  private async reconcileApprovedProposals(state: PublishedNativeState): Promise<void> {
+    if (!state.settings) return
+    const stateTime = Date.parse(state.generatedAt)
+    if (Number.isNaN(stateTime)) return
+
+    const proposals = await this.proposalStore.list()
+    for (const proposal of proposals) {
+      if (proposal.status !== 'pending' || proposal.approvedAt === null) continue
+      const approvedTime = Date.parse(proposal.approvedAt)
+      if (
+        Number.isNaN(approvedTime) ||
+        stateTime - approvedTime < PROPOSAL_RECONCILIATION_GRACE_MS
+      ) {
+        continue
+      }
+
+      const localPreset = this.presets.find((preset) => preset.id === proposal.presetId)
+      const nativePrefix = `orca:${proposal.presetKind}:`
+      const originalName =
+        localPreset?.name ??
+        (proposal.presetId.startsWith(nativePrefix)
+          ? proposal.presetId.slice(nativePrefix.length)
+          : proposal.presetId)
+      const expectedName =
+        proposal.destination === 'save-as-new-preset' ? proposal.newPresetName : originalName
+      const selectedNames =
+        proposal.presetKind === 'process'
+          ? [state.selections.process.name]
+          : state.selections.filaments.map((filament) => filament.name)
+      if (!expectedName || !selectedNames.includes(expectedName)) continue
+
+      const currentValues: Record<string, (typeof proposal.after)[string]> = {}
+      let complete = true
+      for (const key of Object.keys(proposal.after)) {
+        if (!Object.prototype.hasOwnProperty.call(state.settings, key)) {
+          complete = false
+          break
+        }
+        currentValues[key] = state.settings[key]!
+      }
+      if (!complete) continue
+      const applied = parameterSnapshotsEqual(currentValues, proposal.after)
+
+      await this.proposalStore.complete({
+        id: proposal.id,
+        receipt: {
+          authority: 'orca',
+          status: applied ? 'applied' : 'failed',
+          revision: state.revision,
+          before: proposal.before,
+          after: applied ? currentValues : proposal.after,
+          ...(applied
+            ? {}
+            : {
+                error: "The approved change is not present in Orca's current settings.",
+              }),
+        },
+      })
+    }
   }
 }
 

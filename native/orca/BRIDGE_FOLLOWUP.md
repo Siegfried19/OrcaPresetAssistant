@@ -166,6 +166,10 @@ machine 有意保持只读：传入 `presetType=machine` 返回 `PRESET_TYPE_REA
 
 回执中的“撤销”不建立第二套写入逻辑，而是调用同一个 `proposal.rollback` 事务。revision 或当前值发生变化时，guard 失效并拒绝覆盖用户后续手工修改；成功撤销时，回执保留并标记“本次更新已撤销”。永久预设在 `save_preset()` 后通常没有普通 dirty 回滚箭头，因此该回执是永久写入的明确可见确认。
 
+### 普通参数扩展与多值参数的单值广播
+
+`0013` 在前十二批稳定基线上扩展普通工艺/耗材白名单，并让 `scalar-or-vector` 参数真正符合能力声明：标量请求先按现有规则完成类型和范围验证，再由 Orca 原生端按当前 `ConfigOption` 的真实值数量广播。显式多值请求仍必须与当前数量一致，因此不会改变喷嘴槽位结构。
+
 ## 打印建档
 
 PrintJob 只有在设备提交成功后才通过 `wxGetApp().CallAfter` 把事件切回 UI 线程。原生 payload 包含：
@@ -195,7 +199,7 @@ PrintJob 只有在设备提交成功后才通过 `wxGetApp().CallAfter` 把事�
 
 ## 最小验收
 
-1. 0001→0002→0003→0004→0005→0006→0007→0008→0009→0010→0011→0012 在临时 Orca 基线上顺序通过 `git apply --check --whitespace=error-all`。
+1. 0001→0002→0003→0004→0005→0006→0007→0008→0009→0010→0011→0012→0013 在临时 Orca 基线上顺序通过 `git apply --check --whitespace=error-all`。
 2. 错误来源、token、协议、revision、批准状态或预设 identity 全部失败关闭。
 3. 正式 React 页面来自无窗口 helper，桌面仍只有 Orca 和 Codex 两个窗口。
 4. session token 不写入 ready 文件；语言 query 插在 `#session` fragment 之前。

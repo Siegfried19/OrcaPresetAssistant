@@ -12,6 +12,7 @@ import type {
   RollbackGuardResult,
 } from '@shared/contracts'
 import type { CompleteChangeProposalRequest } from '@shared/helper-http'
+import { parameterSnapshotsEqual, parameterValuesEqual } from '@shared/parameter-comparison'
 
 import { atomicWriteJson } from './atomic-write'
 
@@ -54,17 +55,14 @@ function isParameterSnapshot(value: unknown): value is ParameterSnapshot {
   )
 }
 
-function equal(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right)
-}
-
 function snapshotsDescribeChange(before: ParameterSnapshot, after: ParameterSnapshot): boolean {
   const beforeKeys = Object.keys(before).sort()
   const afterKeys = Object.keys(after).sort()
   return (
     beforeKeys.length > 0 &&
-    equal(beforeKeys, afterKeys) &&
-    beforeKeys.some((key) => !equal(before[key], after[key]))
+    beforeKeys.length === afterKeys.length &&
+    beforeKeys.every((key, index) => key === afterKeys[index]) &&
+    beforeKeys.some((key) => !parameterValuesEqual(before[key]!, after[key]!))
   )
 }
 
@@ -320,8 +318,8 @@ export class ChangeProposalStore {
             : null) &&
         existing.reason === request.reason &&
         existing.requestedRevision === request.requestedRevision &&
-        equal(existing.before, request.before) &&
-        equal(existing.after, request.after)
+        parameterSnapshotsEqual(existing.before, request.before) &&
+        parameterSnapshotsEqual(existing.after, request.after)
       ) {
         return existing
       }
@@ -361,6 +359,12 @@ export class ChangeProposalStore {
     const existing = document.proposals[index]
     if (!existing) throw new Error('change-proposal-not-found')
     const receipt = request.receipt
+    const completesPending =
+      receipt?.status !== 'rolled-back' &&
+      existing.status === 'pending' &&
+      existing.approvedAt !== null
+    const repeatsApplied = receipt?.status === 'applied' && existing.status === 'applied'
+    const rollsBackApplied = receipt?.status === 'rolled-back' && existing.status === 'applied'
     if (
       receipt?.authority !== 'orca' ||
       !['applied', 'rejected', 'failed', 'rolled-back'].includes(receipt.status) ||
@@ -372,14 +376,28 @@ export class ChangeProposalStore {
         (typeof receipt.error !== 'string' || receipt.error.length > 2_000)) ||
       (receipt.rollbackGuard !== undefined && !isRollbackGuard(receipt.rollbackGuard)) ||
       (receipt.status !== 'applied' && receipt.rollbackGuard !== undefined) ||
-      (receipt.status === 'rolled-back' && existing.status !== 'applied') ||
-      (receipt.status !== 'rolled-back' &&
-        (existing.status !== 'pending' || existing.approvedAt === null))
+      (!completesPending && !repeatsApplied && !rollsBackApplied)
     ) {
       throw new Error('invalid-authoritative-receipt')
     }
-    if (!equal(receipt.before, existing.before) || !equal(receipt.after, existing.after)) {
+    if (
+      !parameterSnapshotsEqual(receipt.before, existing.before) ||
+      !parameterSnapshotsEqual(receipt.after, existing.after)
+    ) {
       throw new Error('invalid-authoritative-receipt')
+    }
+
+    if (repeatsApplied) {
+      if (
+        receipt.revision !== existing.authoritativeRevision ||
+        (existing.rollbackGuard !== null &&
+          receipt.rollbackGuard !== undefined &&
+          (receipt.rollbackGuard.id !== existing.rollbackGuard.id ||
+            receipt.rollbackGuard.validAtRevision !== existing.rollbackGuard.validAtRevision))
+      ) {
+        throw new Error('invalid-authoritative-receipt')
+      }
+      if (existing.rollbackGuard !== null || receipt.rollbackGuard === undefined) return existing
     }
 
     const updated: ChangeProposalView = {
@@ -436,7 +454,9 @@ export class ChangeProposalStore {
     }
     if (
       Object.keys(proposal.after).some(
-        (key) => !equal(request.currentValues[key], proposal.after[key]),
+        (key) =>
+          !Object.prototype.hasOwnProperty.call(request.currentValues, key) ||
+          !parameterValuesEqual(request.currentValues[key]!, proposal.after[key]!),
       )
     ) {
       return { allowed: false, reason: 'values-changed', changes: null }
