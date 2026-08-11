@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 
-set "PACKAGED_ORCA=%~dp0FullVersion\OrcaSlicer\orca-slicer.exe"
+set "PACKAGED_ORCA=%~dp0FullVersion\OrcaPresetAssistant-Orca-0.6.2-Windows-x64\orca-slicer.exe"
 if exist "%PACKAGED_ORCA%" (
   start "" "%PACKAGED_ORCA%"
   exit /b 0
