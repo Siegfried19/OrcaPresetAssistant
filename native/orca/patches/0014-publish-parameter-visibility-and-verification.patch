@@ -1,0 +1,88 @@
+diff --git a/src/slic3r/GUI/PresetAssistantBridge.cpp b/src/slic3r/GUI/PresetAssistantBridge.cpp
+--- a/src/slic3r/GUI/PresetAssistantBridge.cpp
++++ b/src/slic3r/GUI/PresetAssistantBridge.cpp
+@@ -338,6 +338,7 @@ struct WriteRule
+     const char*      unit;
+     bool             dynamic_layer_max{false};
+     bool             allow_multiple{false};
++    bool             panel_visible{true};
+ };
+ 
+ const std::array<WriteRule, 47>& process_write_rules()
+@@ -363,7 +364,7 @@ const std::array<WriteRule, 47>& process_write_rules()
+         {"support_interface_spacing", coFloat, ScalarKind::Number, 0.0, 20.0, "mm"},
+         {"support_bottom_interface_spacing", coFloat, ScalarKind::Number, 0.0, 20.0, "mm"},
+         {"support_expansion",        coFloat,   ScalarKind::Number,  -20.0,20.0,  "mm"},
+-        {"support_interface_loop_pattern", coBool, ScalarKind::Boolean, 0.0, 1.0, "boolean"},
++        {"support_interface_loop_pattern", coBool, ScalarKind::Boolean, 0.0, 1.0, "boolean", false, false, false},
+         {"support_object_xy_distance", coFloat, ScalarKind::Number, 0.0, 10.0, "mm"},
+         {"support_object_first_layer_gap", coFloat, ScalarKind::Number, 0.0, 10.0, "mm"},
+         {"support_on_build_plate_only", coBool, ScalarKind::Boolean, 0.0, 1.0, "boolean"},
+@@ -461,14 +462,38 @@ const char* scalar_kind_name(ScalarKind kind)
+     return "unknown";
+ }
+ 
++const char* config_option_mode_name(ConfigOptionMode mode)
++{
++    switch (mode) {
++    case comSimple:   return "simple";
++    case comAdvanced: return "advanced";
++    case comExpert:   return "expert";
++    case comDevelop:  return "developer";
++    }
++    return "advanced";
++}
++
+ json serialized_write_rule(const WriteRule& rule)
+ {
++    const ConfigOptionDef* definition = print_config_def.get(rule.key);
++    const std::string display_label = definition == nullptr
++        ? rule.key
++        : (!definition->full_label.empty()
++            ? definition->full_label
++            : (!definition->label.empty() ? definition->label : rule.key));
+     json result{
+         {"key", rule.key},
+         {"valueShape", rule.allow_multiple ? "scalar-or-vector" : "scalar"},
+         {"kind", scalar_kind_name(rule.scalar_kind)},
+         {"minimum", rule.minimum},
+         {"unit", rule.unit},
++        {"displayLabel", display_label},
++        {"category", definition == nullptr ? "" : definition->category},
++        {"editorMode", definition == nullptr
++            ? "advanced"
++            : config_option_mode_name(definition->mode)},
++        {"panelVisibility", rule.panel_visible ? "visible" : "hidden"},
++        {"verification", "orca-readback"},
+     };
+     if (rule.dynamic_layer_max) {
+         result["maximum"] = nullptr;
+diff --git a/tests/slic3rutils/test_preset_assistant_bridge.cpp b/tests/slic3rutils/test_preset_assistant_bridge.cpp
+--- a/tests/slic3rutils/test_preset_assistant_bridge.cpp
++++ b/tests/slic3rutils/test_preset_assistant_bridge.cpp
+@@ -285,7 +285,10 @@ TEST_CASE("Preset Assistant only exposes the ordinary controlled write allowlist",
+ 
+     json support_speed_rule = nullptr;
+     json support_loop_rule = nullptr;
++    json layer_height_rule = nullptr;
+     for (const json& rule : capabilities["process"]["settings"]) {
++        if (rule["key"] == "layer_height")
++            layer_height_rule = rule;
+         if (rule["key"] == "support_interface_speed")
+             support_speed_rule = rule;
+         if (rule["key"] == "support_interface_loop_pattern")
+@@ -297,6 +300,14 @@ TEST_CASE("Preset Assistant only exposes the ordinary controlled write allowlist",
+           "broadcast-to-current-value-count");
+     REQUIRE_FALSE(support_loop_rule.is_null());
+     CHECK(support_loop_rule["kind"] == "boolean");
++    CHECK(support_loop_rule["panelVisibility"] == "hidden");
++    CHECK(support_loop_rule["verification"] == "orca-readback");
++    REQUIRE_FALSE(layer_height_rule.is_null());
++    CHECK(layer_height_rule["panelVisibility"] == "visible");
++    CHECK(layer_height_rule["displayLabel"].is_string());
++    CHECK_FALSE(layer_height_rule["displayLabel"].get<std::string>().empty());
++    CHECK(layer_height_rule["category"].is_string());
++    CHECK(layer_height_rule["editorMode"].is_string());
+ 
+     const json layer_rule = capabilities["process"]["settings"].front();
+     CHECK(layer_rule["key"] == "layer_height");

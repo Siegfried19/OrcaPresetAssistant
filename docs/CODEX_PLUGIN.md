@@ -50,6 +50,8 @@
 
 如果希望 Codex 直接协助维护 Git，请把 `<Workspace>\UserPresets` 作为 Codex 任务文件夹打开，并明确说要检查、保存或同步哪些内容。面板不会展示 `AGENTS.md`、`CHANGELOG.md` 等 AI 工作说明。
 
+首次选择普通父文件夹时，软件会自动建立标准目录并在不存在时创建 `UserPresets\AGENTS.md`。插件必须先读取 Orca 返回的 `writeCapabilities`，不维护第二份白名单；隐藏参数会明确说明没有可见面板控件，写入成功只以 Orca 原生回执和新版本回读为准。
+
 ### 更新或卸载
 
 更新插件包时，解压到稳定目录，重新执行 Marketplace 和插件安装命令，然后新建 Codex 任务。卸载命令：
@@ -107,6 +109,8 @@ The panel can initialize an independent local Git repository at `<Workspace>\Use
 - The panel has no GitHub, push, pull, branch, or remote-management UI.
 
 To ask Codex for direct Git help, open `<Workspace>\UserPresets` as the Codex task folder and explicitly state what should be inspected, saved, or synchronized. AI-only files such as `AGENTS.md` and `CHANGELOG.md` are not shown in the panel.
+
+When a normal parent folder is first selected, the app creates the standard structure and adds `UserPresets\AGENTS.md` only if it does not exist. The plugin must read Orca's `writeCapabilities` instead of maintaining a second allowlist. Hidden settings are identified as having no visible panel control, and success requires both a native Orca receipt and fresh-revision readback.
 
 ### Update or uninstall
 

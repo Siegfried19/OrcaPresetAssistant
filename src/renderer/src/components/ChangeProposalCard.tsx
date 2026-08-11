@@ -1,18 +1,21 @@
-import { ArrowRight, Bot, Check, Clock3, RotateCcw, X } from 'lucide-react'
+import { ArrowRight, Bot, Check, CheckCircle2, Clock3, RotateCcw, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import type {
   ApproveChangeProposalRequest,
   ChangeDestination,
   ChangeProposalView,
+  OrcaWriteCapabilities,
 } from '@shared/contracts'
 
 import { useI18n } from '../i18n/I18nProvider'
 import type { TranslationKey } from '../i18n/messages'
+import { parameterCapability } from '../lib/parameter-capabilities'
 
 interface ChangeProposalCardProps {
   readonly proposal: ChangeProposalView | null
   readonly targetName: string | null
+  readonly writeCapabilities: OrcaWriteCapabilities | null
   readonly onApprove: (request: ApproveChangeProposalRequest) => Promise<void>
   readonly onReject: (id: string) => Promise<void>
   readonly onRollback: (id: string) => Promise<void>
@@ -31,6 +34,7 @@ function valueText(value: unknown): string {
 export function ChangeProposalCard({
   proposal,
   targetName,
+  writeCapabilities,
   onApprove,
   onReject,
   onRollback,
@@ -133,15 +137,32 @@ export function ChangeProposalCard({
             <span>{t('proposal.before')}</span>
             <span>{t('proposal.after')}</span>
           </div>
-          {keys.map((key) => (
-            <div className="proposal-diff-row" key={key}>
-              <code>{key}</code>
-              <span>{valueText(proposal.before[key])}</span>
-              <ArrowRight aria-hidden="true" size={12} />
-              <span>{valueText(proposal.after[key])}</span>
-            </div>
-          ))}
+          {keys.map((key) => {
+            const capability = parameterCapability(writeCapabilities, proposal.presetKind, key)
+            return (
+              <div className="proposal-diff-row" key={key}>
+                <div className="proposal-parameter-name">
+                  <span>{capability?.displayLabel ?? key}</span>
+                  <code>{key}</code>
+                  {capability?.panelVisibility === 'hidden' && (
+                    <small className="parameter-visibility-hidden">
+                      {t('proposal.parameter.hidden')}
+                    </small>
+                  )}
+                </div>
+                <span>{valueText(proposal.before[key])}</span>
+                <ArrowRight aria-hidden="true" size={12} />
+                <span>{valueText(proposal.after[key])}</span>
+              </div>
+            )
+          })}
         </div>
+
+        {keys.some(
+          (key) =>
+            parameterCapability(writeCapabilities, proposal.presetKind, key)?.panelVisibility ===
+            'hidden',
+        ) && <p className="proposal-hidden-note">{t('proposal.parameter.hiddenHelp')}</p>}
 
         {awaitingApproval && (
           <>
@@ -207,19 +228,37 @@ export function ChangeProposalCard({
           </div>
         )}
 
-        {proposal.status === 'applied' && proposal.rollbackGuard && (
-          <div className="proposal-rollback">
-            <p>{t('proposal.rollbackBody')}</p>
-            <button
-              className="secondary-button"
-              disabled={pendingAction !== null}
-              onClick={() => void rollback()}
-              type="button"
-            >
-              <RotateCcw aria-hidden="true" size={15} />
-              {pendingAction === 'rollback' ? t('proposal.rollingBack') : t('proposal.rollback')}
-            </button>
-          </div>
+        {proposal.status === 'applied' && (
+          <>
+            <div className="proposal-verified">
+              <CheckCircle2 aria-hidden="true" size={17} />
+              <span>
+                <strong>{t('proposal.verified.title')}</strong>
+                <small>
+                  {t('proposal.verified.body', {
+                    destination: t(`proposal.destination.${proposal.destination}`),
+                    revision: proposal.authoritativeRevision ?? '—',
+                  })}
+                </small>
+              </span>
+            </div>
+            {proposal.rollbackGuard && (
+              <div className="proposal-rollback">
+                <p>{t('proposal.rollbackBody')}</p>
+                <button
+                  className="secondary-button"
+                  disabled={pendingAction !== null}
+                  onClick={() => void rollback()}
+                  type="button"
+                >
+                  <RotateCcw aria-hidden="true" size={15} />
+                  {pendingAction === 'rollback'
+                    ? t('proposal.rollingBack')
+                    : t('proposal.rollback')}
+                </button>
+              </div>
+            )}
+          </>
         )}
 
         {proposal.error && <div className="form-error proposal-form-error">{proposal.error}</div>}

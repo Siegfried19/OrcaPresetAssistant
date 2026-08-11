@@ -70,8 +70,8 @@ async function startHelper(): Promise<void> {
         const result = await dialog.showOpenDialog({
           title:
             language === 'en'
-              ? 'Choose Orca Preset Assistant workspace'
-              : '选择 Orca 预设助手工作区',
+              ? 'Create or connect an Orca Preset Assistant workspace'
+              : '创建或连接 Orca 预设助手工作区',
           properties: ['openDirectory'],
         })
         return result.canceled ? null : (result.filePaths[0] ?? null)

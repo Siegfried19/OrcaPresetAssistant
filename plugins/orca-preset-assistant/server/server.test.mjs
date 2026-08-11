@@ -43,6 +43,14 @@ test('current-project returns settings, placement, geometry summary, and an imag
         revision: '8',
         selections: { process: { name: 'Process' } },
         settings: { layer_height: '0.2' },
+        writeCapabilities: {
+          process: {
+            access: 'controlled-write',
+            settings: [{ key: 'layer_height', panelVisibility: 'visible' }],
+          },
+          filament: { access: 'controlled-write', settings: [] },
+          machine: { access: 'read-only', settings: [] },
+        },
         project: {
           authorization: 'project:geometry',
           placement: {
@@ -73,6 +81,10 @@ test('current-project returns settings, placement, geometry summary, and an imag
     const response = JSON.parse(result.stdout.trim())
     const toolResult = response.result
     assert.equal(toolResult.structuredContent.settings.layer_height, '0.2')
+    assert.equal(
+      toolResult.structuredContent.writeCapabilities.process.settings[0].key,
+      'layer_height',
+    )
     assert.equal(toolResult.structuredContent.modelGeometry.models[0].triangleCount, 1)
     assert.ok(
       toolResult.content.some((item) => item.type === 'image' && item.mimeType === 'image/png'),

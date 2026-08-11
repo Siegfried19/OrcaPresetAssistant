@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { shell } from 'electron'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type { OrcaWriteCapabilities } from '../../shared/contracts'
+
 import { ensureWorkspaceRoot } from '../infrastructure/discovery'
 import {
   createOrcaPrintHistoryBundle,
@@ -20,6 +22,30 @@ vi.mock('electron', () => ({
 }))
 
 const roots: string[] = []
+
+const writeCapabilities: OrcaWriteCapabilities = {
+  process: {
+    access: 'controlled-write',
+    settings: [
+      {
+        key: 'layer_height',
+        valueShape: 'scalar',
+        kind: 'number',
+        minimum: 0.04,
+        maximum: null,
+        dynamicMaximum: '80-percent-of-smallest-active-nozzle',
+        unit: 'mm',
+        displayLabel: 'Layer height',
+        category: 'Quality',
+        editorMode: 'simple',
+        panelVisibility: 'visible',
+        verification: 'orca-readback',
+      },
+    ],
+  },
+  filament: { access: 'controlled-write', settings: [] },
+  machine: { access: 'read-only', settings: [] },
+}
 
 afterEach(async () => {
   vi.useRealTimers()
@@ -142,6 +168,7 @@ describe('DashboardService native proposal targets', () => {
     await service.setCodexScope('current-settings')
     await service.publishNativeState({
       revision: 12,
+      writeCapabilities,
       selections: {
         machine: identity('Official Machine', true),
         process: identity('Official Process', true),
@@ -213,6 +240,7 @@ describe('DashboardService native proposal targets', () => {
     expect(preset).toBeDefined()
     await service.publishNativeState({
       revision: 12,
+      writeCapabilities,
       selections: {
         machine: identity('Machine', true),
         process: identity(name, false),
@@ -237,6 +265,7 @@ describe('DashboardService native proposal targets', () => {
 
     await service.publishNativeState({
       revision: 13,
+      writeCapabilities,
       selections: {
         machine: identity('Machine', true),
         process: identity(name, false),
@@ -288,6 +317,7 @@ describe('DashboardService native proposal targets', () => {
 
     await service.publishNativeState({
       revision: 1,
+      writeCapabilities,
       selections: {
         machine: identity('Machine', true),
         process: identity(name, false),

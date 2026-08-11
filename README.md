@@ -19,14 +19,15 @@ Orca Preset Assistant 是嵌入 OrcaSlicer 主窗口的用户预设与打印历�
 - **用户自定义预设**：查看 machine、process、filament 用户预设，审阅 Codex 参数提案，并明确选择写入位置。
 - **打印历史**：自动或手动保存打印档案，记录实际有效参数，并在打印后补写结果和备注。
 
-首次使用时选择一个工作文件夹。程序只管理下面两个子文件夹：
+首次使用时选择一个普通父文件夹，不要直接选择 `UserPresets`。程序会自动创建并只管理下面的结构；已有 `AGENTS.md` 不会被覆盖：
 
 ```text
 <Workspace>\
 ├─ UserPresets\
 │  ├─ machine\
 │  ├─ process\
-│  └─ filament\
+│  ├─ filament\
+│  └─ AGENTS.md
 └─ PrintHistory\
 ```
 
@@ -38,13 +39,13 @@ Orca Preset Assistant 是嵌入 OrcaSlicer 主窗口的用户预设与打印历�
 - 用“Orca 创建/管理”或“本地 JSON”标记预设来源；只有 JSON 的本地预设仍可正常使用。
 - 查看逐预设的本地变化；在 `UserPresets` 中启用独立本地版本、保存快照并安全恢复旧版本。
 - 让 Codex 按授权级别读取通用状态、当前设置，或当前项目的零件摆放和模型几何。
-- 审批参数变化并选择“仅当前项目 / 更新当前永久预设 / 另存为新永久预设”。
+- 审批参数变化并选择“仅当前项目 / 更新当前永久预设 / 另存为新永久预设”；面板区分可见和隐藏参数，并只在 Orca 原生回读后显示“已应用并验证”。
 - 在没有后续冲突时回滚最近一次 Orca 写入。
 - 打印提交成功后自动建档，可选择是否保存当前项目 3MF 副本。
 - 打印完成后补写成功、问题、失败和备注。
 - Orca 原生标签跟随 Orca 语言；面板内容可独立切换中文或英文。
 
-机器预设目前只读。Codex 自动写入只开放给 Orca 原生层明确验证过的 process / filament 参数白名单。
+机器预设目前只读。Codex 直接使用 Orca 原生层发布的 process / filament 受控写入能力，不维护第二份参数白名单。
 
 ### 下载与使用
 
@@ -179,14 +180,15 @@ The panel has only two top-level pages:
 - **User Presets**: inspect machine, process, and filament presets, review Codex proposals, and explicitly choose where a change will be written.
 - **Print History**: archive prints automatically or manually, preserve the effective settings, and add results or notes after printing.
 
-On first use, choose one workspace folder. The application manages only these two subdirectories:
+On first use, choose a normal parent folder, not `UserPresets` itself. The app creates and manages only the structure below; an existing `AGENTS.md` is never overwritten:
 
 ```text
 <Workspace>\
 ├─ UserPresets\
 │  ├─ machine\
 │  ├─ process\
-│  └─ filament\
+│  ├─ filament\
+│  └─ AGENTS.md
 └─ PrintHistory\
 ```
 
@@ -198,7 +200,7 @@ Official Orca presets remain in their original Orca-managed location. They are n
 - Mark each preset as either **Orca Created / Managed** or **Local JSON**. A JSON-only preset remains valid.
 - See local changes per preset; initialize independent local versions in `UserPresets`, save snapshots, and safely restore an earlier version.
 - Let Codex read general context, current settings, or current-project placement and model geometry according to explicit permission.
-- Approve a change only after choosing **Current Project Only**, **Update Current Permanent Preset**, or **Save as New Permanent Preset**.
+- Approve a change only after choosing **Current Project Only**, **Update Current Permanent Preset**, or **Save as New Permanent Preset**. The panel distinguishes visible and hidden settings and shows **Applied and Verified** only after native Orca readback.
 - Roll back the latest Orca write when no later change conflicts with it.
 - Create a print archive after a successful print submission, with an optional current-project 3MF copy.
 - Add success, issue, failure, and notes after the physical print finishes.

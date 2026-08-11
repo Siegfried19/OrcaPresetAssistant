@@ -328,6 +328,7 @@ class OrcaDashboardApi implements DashboardApi {
       const state = await readOrcaState(this.bridge)
       let revision = state.revision
       let selections = state.data.presets
+      let writeCapabilities = state.data.writeCapabilities
       let settings
       let project
 
@@ -335,6 +336,7 @@ class OrcaDashboardApi implements DashboardApi {
         const nativeSettings = await readOrcaSettings(this.bridge)
         revision = nativeSettings.revision
         selections = nativeSettings.data.presets
+        writeCapabilities = nativeSettings.data.writeCapabilities
         settings = nativeSettings.data.effective
       }
       if (scope === 'current-project') {
@@ -348,6 +350,7 @@ class OrcaDashboardApi implements DashboardApi {
         {
           revision,
           selections,
+          writeCapabilities,
           ...(settings ? { settings } : {}),
           ...(project ? { project } : {}),
         },

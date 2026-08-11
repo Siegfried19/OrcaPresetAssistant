@@ -4,7 +4,10 @@ import { join } from 'node:path'
 import type {
   CodexPermissionScope,
   OrcaPresetIdentity,
+  OrcaPresetWriteCapability,
   OrcaPresetSelections,
+  OrcaWriteCapabilities,
+  OrcaWriteSettingCapability,
   ParameterSnapshot,
   ParameterValue,
 } from '@shared/contracts'
@@ -86,6 +89,56 @@ function isSelections(value: unknown): value is OrcaPresetSelections {
   )
 }
 
+function isWriteSettingCapability(value: unknown): value is OrcaWriteSettingCapability {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  return (
+    typeof record.key === 'string' &&
+    /^[A-Za-z0-9_]+$/u.test(record.key) &&
+    (record.valueShape === 'scalar' || record.valueShape === 'scalar-or-vector') &&
+    ['boolean', 'integer', 'number', 'percent'].includes(String(record.kind)) &&
+    typeof record.minimum === 'number' &&
+    Number.isFinite(record.minimum) &&
+    (record.maximum === null ||
+      (typeof record.maximum === 'number' && Number.isFinite(record.maximum))) &&
+    (record.dynamicMaximum === undefined || typeof record.dynamicMaximum === 'string') &&
+    typeof record.unit === 'string' &&
+    (record.scalarBehavior === undefined ||
+      record.scalarBehavior === 'broadcast-to-current-value-count') &&
+    typeof record.displayLabel === 'string' &&
+    Boolean(record.displayLabel) &&
+    typeof record.category === 'string' &&
+    ['simple', 'advanced', 'expert', 'developer'].includes(String(record.editorMode)) &&
+    (record.panelVisibility === 'visible' || record.panelVisibility === 'hidden') &&
+    record.verification === 'orca-readback'
+  )
+}
+
+function isPresetWriteCapability(value: unknown): value is OrcaPresetWriteCapability {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  return (
+    (record.access === 'controlled-write' || record.access === 'read-only') &&
+    Array.isArray(record.settings) &&
+    record.settings.every(isWriteSettingCapability)
+  )
+}
+
+function isWriteCapabilities(value: unknown): value is OrcaWriteCapabilities {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  return (
+    Object.keys(record).length === 3 &&
+    isPresetWriteCapability(record.process) &&
+    isPresetWriteCapability(record.filament) &&
+    isPresetWriteCapability(record.machine) &&
+    record.process.access === 'controlled-write' &&
+    record.filament.access === 'controlled-write' &&
+    record.machine.access === 'read-only' &&
+    record.machine.settings.length === 0
+  )
+}
+
 function isJsonValue(value: unknown, depth = 0): value is HelperJsonValue {
   if (depth > 8) return false
   if (
@@ -113,12 +166,17 @@ function validateRequest(value: unknown): PublishNativeStateRequest {
   if (
     Object.keys(record).some(
       (key) =>
-        key !== 'revision' && key !== 'selections' && key !== 'settings' && key !== 'project',
+        key !== 'revision' &&
+        key !== 'selections' &&
+        key !== 'writeCapabilities' &&
+        key !== 'settings' &&
+        key !== 'project',
     ) ||
     typeof record.revision !== 'number' ||
     !Number.isSafeInteger(record.revision) ||
     record.revision < 0 ||
     !isSelections(record.selections) ||
+    !isWriteCapabilities(record.writeCapabilities) ||
     (record.settings !== undefined && !isParameterSnapshot(record.settings)) ||
     (record.project !== undefined &&
       (typeof record.project !== 'object' ||
@@ -142,6 +200,7 @@ function isPublishedState(value: unknown): value is PublishedNativeState {
     typeof record.revision === 'string' &&
     /^[0-9]+$/u.test(record.revision) &&
     isSelections(record.selections) &&
+    isWriteCapabilities(record.writeCapabilities) &&
     (record.settings === undefined || isParameterSnapshot(record.settings)) &&
     (record.project === undefined || isJsonValue(record.project))
   )
@@ -168,6 +227,7 @@ export class NativeStateStore {
       generatedAt: new Date().toISOString(),
       revision: String(request.revision),
       selections: request.selections,
+      writeCapabilities: request.writeCapabilities,
       ...(scope === 'general' ? {} : { settings: request.settings }),
       ...(scope === 'current-project' ? { project: request.project } : {}),
     }

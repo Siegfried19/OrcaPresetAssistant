@@ -13,6 +13,7 @@ import {
 import type {
   ApproveChangeProposalRequest,
   ChangeProposalView,
+  OrcaWriteCapabilities,
   PresetView,
 } from '@shared/contracts'
 
@@ -26,6 +27,7 @@ interface InspectorProps {
   readonly preset: PresetView | null
   readonly proposal: ChangeProposalView | null
   readonly proposalTargetName: string | null
+  readonly writeCapabilities: OrcaWriteCapabilities | null
   readonly onClose: () => void
   readonly onRecord: () => void
   readonly onShowDiff: (presetId: string) => void
@@ -38,6 +40,7 @@ export function Inspector({
   preset,
   proposal,
   proposalTargetName,
+  writeCapabilities,
   onClose,
   onRecord,
   onShowDiff,
@@ -144,6 +147,7 @@ export function Inspector({
           onRollback={onRollbackProposal}
           proposal={proposal}
           targetName={proposalTargetName}
+          writeCapabilities={writeCapabilities}
         />
 
         <section className="detail-section">

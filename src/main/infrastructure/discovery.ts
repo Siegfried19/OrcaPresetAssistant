@@ -2,6 +2,7 @@ import { lstat, mkdir } from 'node:fs/promises'
 import { join, parse, resolve } from 'node:path'
 
 import type { RootResolution } from '../domain/models'
+import { ensureWorkspaceGuidance } from './workspace-guidance'
 
 export const USER_PRESETS_DIRECTORY = 'UserPresets'
 export const PRINT_HISTORY_DIRECTORY = 'PrintHistory'
@@ -89,6 +90,8 @@ export async function ensureWorkspaceRoot(path: string): Promise<WorkspacePaths>
       if (!(await isPlainDirectory(target))) throw error
     })
   }
+
+  await ensureWorkspaceGuidance(paths.userPresets)
 
   if (!(await isWorkspaceRoot(paths.root))) {
     throw new Error('invalid-workspace-root')

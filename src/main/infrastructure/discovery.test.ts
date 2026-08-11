@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, parse } from 'node:path'
 
@@ -21,16 +21,37 @@ afterEach(async () => {
 })
 
 describe('workspace discovery', () => {
-  it('creates only the two product folders and the three preset kinds', async () => {
+  it('creates the product folders, preset kinds, and reusable workspace guidance', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-workspace-'))
     temporaryRoots.push(root)
 
     const paths = await ensureWorkspaceRoot(root)
 
     expect((await readdir(root)).sort()).toEqual(['PrintHistory', 'UserPresets'])
-    expect((await readdir(paths.userPresets)).sort()).toEqual(['filament', 'machine', 'process'])
+    expect((await readdir(paths.userPresets)).sort()).toEqual([
+      'AGENTS.md',
+      'filament',
+      'machine',
+      'process',
+    ])
+    expect(await readFile(join(paths.userPresets, 'AGENTS.md'), 'utf8')).toContain(
+      'Treat a change as successful only after Orca returns an authoritative receipt',
+    )
     expect(await readdir(paths.printHistory)).toEqual([])
     expect(await isWorkspaceRoot(root)).toBe(true)
+  })
+
+  it('never overwrites existing workspace guidance', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-workspace-'))
+    temporaryRoots.push(root)
+    const paths = await ensureWorkspaceRoot(root)
+    await writeFile(join(paths.userPresets, 'AGENTS.md'), '# User-owned guidance\n', 'utf8')
+
+    await ensureWorkspaceRoot(root)
+
+    expect(await readFile(join(paths.userPresets, 'AGENTS.md'), 'utf8')).toBe(
+      '# User-owned guidance\n',
+    )
   })
 
   it('resolves a saved workspace without searching Bambu Studio data', async () => {

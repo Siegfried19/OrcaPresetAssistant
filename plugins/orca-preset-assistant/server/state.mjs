@@ -7,93 +7,6 @@ const SESSION_MAX_AGE_MS = 10_000
 const PRESET_KINDS = new Set(['machine', 'process', 'filament'])
 const WRITABLE_PRESET_KINDS = new Set(['process', 'filament'])
 const DESTINATIONS = new Set(['current-project', 'update-current-preset', 'save-as-new-preset'])
-const WRITABLE_SETTINGS = {
-  process: new Set([
-    'layer_height',
-    'initial_layer_print_height',
-    'wall_loops',
-    'top_shell_layers',
-    'bottom_shell_layers',
-    'sparse_infill_density',
-    'enable_support',
-    'support_threshold_angle',
-    'support_speed',
-    'support_interface_speed',
-    'support_top_z_distance',
-    'support_bottom_z_distance',
-    'support_base_pattern_spacing',
-    'support_angle',
-    'support_interface_top_layers',
-    'support_interface_bottom_layers',
-    'support_interface_spacing',
-    'support_bottom_interface_spacing',
-    'support_expansion',
-    'support_interface_loop_pattern',
-    'support_object_xy_distance',
-    'support_object_first_layer_gap',
-    'support_on_build_plate_only',
-    'support_critical_regions_only',
-    'support_interface_not_for_body',
-    'independent_support_layer_height',
-    'tree_support_wall_count',
-    'brim_width',
-    'skirt_loops',
-    'skirt_distance',
-    'skirt_height',
-    'raft_layers',
-    'bridge_flow',
-    'initial_layer_speed',
-    'outer_wall_speed',
-    'inner_wall_speed',
-    'sparse_infill_speed',
-    'internal_solid_infill_speed',
-    'top_surface_speed',
-    'gap_infill_speed',
-    'travel_speed',
-    'default_acceleration',
-    'travel_acceleration',
-    'initial_layer_acceleration',
-    'outer_wall_acceleration',
-    'inner_wall_acceleration',
-    'top_surface_acceleration',
-  ]),
-  filament: new Set([
-    'filament_flow_ratio',
-    'filament_max_volumetric_speed',
-    'nozzle_temperature',
-    'nozzle_temperature_initial_layer',
-    'cool_plate_temp',
-    'cool_plate_temp_initial_layer',
-    'eng_plate_temp',
-    'eng_plate_temp_initial_layer',
-    'hot_plate_temp',
-    'hot_plate_temp_initial_layer',
-    'textured_plate_temp',
-    'textured_plate_temp_initial_layer',
-    'chamber_temperature',
-    'fan_min_speed',
-    'fan_max_speed',
-    'overhang_fan_speed',
-    'additional_cooling_fan_speed',
-    'fan_cooling_layer_time',
-    'slow_down_layer_time',
-    'slow_down_min_speed',
-    'close_fan_the_first_x_layers',
-    'full_fan_speed_layer',
-    'enable_overhang_bridge_fan',
-    'slow_down_for_layer_cooling',
-    'reduce_fan_stop_start_freq',
-    'dont_slow_down_outer_wall',
-    'enable_pressure_advance',
-    'pressure_advance',
-    'filament_shrink',
-    'filament_shrinkage_compensation_z',
-    'filament_density',
-    'filament_cost',
-    'filament_diameter',
-  ]),
-}
-
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, ''))
 }
@@ -236,6 +149,20 @@ export function readLiveState(requiredScope) {
   return live
 }
 
+function writableSettingsFromCapabilities(live, presetKind) {
+  const capability = live?.writeCapabilities?.[presetKind]
+  if (capability?.access !== 'controlled-write' || !Array.isArray(capability.settings)) {
+    throw new Error(`No authoritative ${presetKind} write capabilities are available.`)
+  }
+  const keys = capability.settings
+    .map((setting) => setting?.key)
+    .filter((key) => typeof key === 'string' && /^[A-Za-z0-9_]+$/.test(key))
+  if (keys.length !== capability.settings.length || new Set(keys).size !== keys.length) {
+    throw new Error(`The authoritative ${presetKind} write capabilities are invalid.`)
+  }
+  return new Set(keys)
+}
+
 export function listPrintHistory() {
   const status = requireScope('current-settings')
   const root = path.join(status.workspace, 'PrintHistory')
@@ -309,7 +236,7 @@ export function queuePresetChange(input) {
   }
   if (!WRITABLE_PRESET_KINDS.has(input?.presetKind)) {
     throw new Error(
-      'Codex writes are limited to the controlled process and filament whitelist; machine presets are read-only.',
+      'Codex writes require Orca controlled-write capabilities for process or filament presets; machine presets are read-only.',
     )
   }
   if (typeof input?.presetId !== 'string' || !input.presetId) {
@@ -321,13 +248,14 @@ export function queuePresetChange(input) {
   if (!parameterSnapshot(input.before) || !parameterSnapshot(input.after)) {
     throw new Error('before and after must be non-empty parameter maps.')
   }
-  const writableSettings = WRITABLE_SETTINGS[input.presetKind]
+  const live = readLiveState('current-settings')
+  const writableSettings = writableSettingsFromCapabilities(live, input.presetKind)
   if (
     Object.keys(input.before).some((key) => !writableSettings.has(key)) ||
     Object.keys(input.after).some((key) => !writableSettings.has(key))
   ) {
     throw new Error(
-      `One or more ${input.presetKind} parameters are outside the controlled Orca write whitelist.`,
+      `One or more ${input.presetKind} parameters are not present in Orca's controlled-write capabilities.`,
     )
   }
   if (
@@ -350,7 +278,6 @@ export function queuePresetChange(input) {
     throw new Error('newPresetName is only valid when saving a new preset.')
   }
 
-  const live = readLiveState('current-settings')
   const request = {
     destination: input.destination,
     presetKind: input.presetKind,

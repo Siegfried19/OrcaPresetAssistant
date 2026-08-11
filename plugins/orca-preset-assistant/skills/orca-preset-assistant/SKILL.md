@@ -15,6 +15,12 @@ description: Safely inspect OrcaSlicer user presets, current effective settings,
 6. Separate machine, process, filament slot, and material role. Never infer a support role from slot number.
 7. Separate completed physical evidence from pending or manually limited records.
 
+## Workspace setup
+
+- Ask the user to choose a normal parent folder, not `UserPresets` itself. The app creates `<Workspace>/UserPresets/{machine,process,filament}` and `<Workspace>/PrintHistory`.
+- A new workspace receives `UserPresets/AGENTS.md` with reusable proposal and verification rules. The app never overwrites an existing `AGENTS.md`.
+- Official Orca presets remain read-only reference data outside the workspace. Do not copy or edit them as though they were user presets.
+
 ## Parameter changes
 
 Always show the exact before/after delta, reason, expected result, and tradeoff. Obtain one explicit destination:
@@ -23,13 +29,23 @@ Always show the exact before/after delta, reason, expected result, and tradeoff.
 2. `update-current-preset`
 3. `save-as-new-preset`
 
-Call `queue_preset_change` only after the destination is explicit. A queued proposal is pending approval; never report it as applied. Report success only after Orca returns an authoritative applied receipt and the live revision contains the requested values.
+Call `get_current_orca_settings` immediately before preparing a proposal. Its `writeCapabilities` is the authoritative parameter capability set. Match the exact selected preset kind and current effective values; do not maintain, infer, or reproduce a separate writable-parameter whitelist.
+
+For every proposed key:
+
+- Require `access: controlled-write` and an exact matching capability entry.
+- Use the capability's `displayLabel`, `category`, `editorMode`, value shape, range, and scalar behavior when explaining the change.
+- If `panelVisibility` is `visible`, use the published metadata to describe the setting without guessing a menu path.
+- If `panelVisibility` is `hidden`, explicitly say that the current Orca build has no visible panel control. Do not invent a panel path. Explain that the value is still an official Orca setting and is validated by native readback.
+- For `scalar-or-vector` settings, preserve explicit slot counts or rely only on the capability's declared scalar broadcast behavior. Never guess the number of nozzles or slots.
+
+Call `queue_preset_change` only after the destination is explicit. A queued proposal and a user approval are both pending states; never report either as applied. Report success only after Orca returns an authoritative applied receipt and a fresh live revision contains every requested `after` value. For permanent writes, the receipt must also represent Orca's native preset save and metadata verification.
 
 For a workspace user preset, pass the exact `id` returned by `list_user_presets`. When saving from the currently selected official preset, use `orca:<kind>:<exact selected name>` and only choose `save-as-new-preset`.
 
 Never overwrite an official system preset. Permanent creation and updates must use Orca's native save path so JSON identity and any metadata managed by Orca remain consistent. Existing local-only JSON presets without `.info` cloud identity metadata are valid and must not be reported as structurally broken.
 
-Machine presets are read-only. Only queue process or filament keys listed by the product's controlled native write capabilities; if a requested key is outside that list, explain the limit instead of trying to bypass it.
+Machine presets are read-only. Only queue process or filament keys published by Orca's controlled native write capabilities; if a requested key is absent, explain the limit instead of trying to bypass it.
 
 ## Privacy and evidence
 

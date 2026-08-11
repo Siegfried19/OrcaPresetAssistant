@@ -2,6 +2,9 @@ import type {
   ChangeDestination,
   OrcaPresetIdentity,
   OrcaPresetSelections,
+  OrcaPresetWriteCapability,
+  OrcaWriteCapabilities,
+  OrcaWriteSettingCapability,
   ParameterSnapshot,
   ParameterValue,
 } from '@shared/contracts'
@@ -74,11 +77,13 @@ export interface OrcaProjectExportResult {
 
 export interface OrcaNativeStateResult {
   readonly presets: OrcaPresetSelections
+  readonly writeCapabilities: OrcaWriteCapabilities
 }
 
 export interface OrcaNativeSettingsResult {
   readonly presets: OrcaPresetSelections
   readonly effective: ParameterSnapshot
+  readonly writeCapabilities: OrcaWriteCapabilities
 }
 
 export interface OrcaPrintSubmittedResult {
@@ -147,6 +152,53 @@ function isPresetIdentity(value: unknown): value is OrcaPresetIdentity {
   )
 }
 
+function isWriteSettingCapability(value: unknown): value is OrcaWriteSettingCapability {
+  if (!isRecord(value)) return false
+  return (
+    typeof value.key === 'string' &&
+    /^[A-Za-z0-9_]+$/u.test(value.key) &&
+    (value.valueShape === 'scalar' || value.valueShape === 'scalar-or-vector') &&
+    ['boolean', 'integer', 'number', 'percent'].includes(String(value.kind)) &&
+    typeof value.minimum === 'number' &&
+    Number.isFinite(value.minimum) &&
+    (value.maximum === null ||
+      (typeof value.maximum === 'number' && Number.isFinite(value.maximum))) &&
+    (value.dynamicMaximum === undefined || typeof value.dynamicMaximum === 'string') &&
+    typeof value.unit === 'string' &&
+    (value.scalarBehavior === undefined ||
+      value.scalarBehavior === 'broadcast-to-current-value-count') &&
+    typeof value.displayLabel === 'string' &&
+    Boolean(value.displayLabel) &&
+    typeof value.category === 'string' &&
+    ['simple', 'advanced', 'expert', 'developer'].includes(String(value.editorMode)) &&
+    (value.panelVisibility === 'visible' || value.panelVisibility === 'hidden') &&
+    value.verification === 'orca-readback'
+  )
+}
+
+function isPresetWriteCapability(value: unknown): value is OrcaPresetWriteCapability {
+  return (
+    isRecord(value) &&
+    (value.access === 'controlled-write' || value.access === 'read-only') &&
+    Array.isArray(value.settings) &&
+    value.settings.every(isWriteSettingCapability)
+  )
+}
+
+export function isWriteCapabilities(value: unknown): value is OrcaWriteCapabilities {
+  return (
+    isRecord(value) &&
+    Object.keys(value).length === 3 &&
+    isPresetWriteCapability(value.process) &&
+    isPresetWriteCapability(value.filament) &&
+    isPresetWriteCapability(value.machine) &&
+    value.process.access === 'controlled-write' &&
+    value.filament.access === 'controlled-write' &&
+    value.machine.access === 'read-only' &&
+    value.machine.settings.length === 0
+  )
+}
+
 export function isPresetSelections(value: unknown): value is OrcaPresetSelections {
   return (
     isRecord(value) &&
@@ -173,12 +225,19 @@ function isHelperJsonValue(value: unknown, depth = 0): value is HelperJsonValue 
 }
 
 function isNativeStateResult(value: unknown): value is OrcaNativeStateResult {
-  return isRecord(value) && isPresetSelections(value.presets)
+  return (
+    isRecord(value) &&
+    isPresetSelections(value.presets) &&
+    isWriteCapabilities(value.writeCapabilities)
+  )
 }
 
 function isNativeSettingsResult(value: unknown): value is OrcaNativeSettingsResult {
   return (
-    isRecord(value) && isPresetSelections(value.presets) && isParameterSnapshot(value.effective)
+    isRecord(value) &&
+    isPresetSelections(value.presets) &&
+    isParameterSnapshot(value.effective) &&
+    isWriteCapabilities(value.writeCapabilities)
   )
 }
 

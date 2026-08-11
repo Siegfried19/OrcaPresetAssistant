@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -64,6 +64,29 @@ describe('preset version repository', () => {
     )
 
     expect((await readGitSnapshot(child)).isRepository).toBe(false)
+  })
+
+  it('recognizes the repository root through an equivalent filesystem alias', async () => {
+    const container = await mkdtemp(join(tmpdir(), 'orca-aliased-repository-'))
+    roots.push(container)
+    const root = join(container, 'actual')
+    const alias = join(container, 'alias')
+    await mkdir(root, { recursive: true })
+    await initializePresetRepository(root)
+    await symlink(root, alias, process.platform === 'win32' ? 'junction' : 'dir')
+
+    expect((await readGitSnapshot(alias)).isRepository).toBe(true)
+  })
+
+  it('retains the original Git failure as the error cause', async () => {
+    const container = await mkdtemp(join(tmpdir(), 'orca-missing-repository-'))
+    roots.push(container)
+    const missingRoot = join(container, 'missing')
+
+    await expect(initializePresetRepository(missingRoot)).rejects.toMatchObject({
+      message: 'git-operation-failed',
+      cause: expect.any(Error),
+    })
   })
 
   it('initializes, saves, lists, and restores preset-only versions', async () => {

@@ -1,18 +1,22 @@
 # 验证状态
 
-最后更新：2026-08-10
+最后更新：2026-08-11
 
 本页记录当前源码已经验证的事实，以及仍需要真实用户环境确认的项目。它不是稳定版发布声明。
 
 ## 已完成的自动化验证
 
 - TypeScript 类型检查、ESLint、Prettier 和 Vitest 全部通过。
-- 应用测试：70 个通过，1 个按运行环境跳过。
+- 应用测试：73 个通过，1 个按运行环境跳过；覆盖新工作区自动生成 `AGENTS.md`、已有指引不覆盖、Windows Git 路径别名识别和 Git 原始错误保留。
 - Codex 插件的模型检查、当前项目访问与 MCP 集成测试：3 个通过。
-- Codex 插件通过插件规范校验，独立 Release ZIP 可生成并包含 Marketplace 清单、插件和双语说明。
-- Orca 原生 `[PresetAssistant]` 测试：12 个用例、86 个断言通过。
+- Codex Skill 快速校验与插件规范校验通过；独立 Release ZIP 可生成并包含 Marketplace 清单、插件和双语说明。
+- Codex 插件直接使用原生 `writeCapabilities` 的 MCP 测试通过，不再依赖重复参数白名单。
+- Orca 原生 `[PresetAssistant]` 测试：12 个用例、94 个断言通过；覆盖可见/隐藏参数元数据与 `orca-readback` 验证声明。
 - Orca 补丁 0001→0013 已从干净产品基线顺序通过 `git apply --check --whitespace=error-all` 并完整重放；最终原生桥源码与实际构建版本一致。
+- 新增补丁 `0014` 已在累计原生源码上通过反向 `git apply --check`，并完成 Release 编译和定向测试；发布前仍需执行 0001→0014 的全新临时基线重放。
 - Windows portable 面板与完整 unpacked helper 成功构建。
+- 当前 Electron helper 生产构建成功，TypeScript、ESLint 和 Prettier 全部通过。
+- 历史 GitHub Actions 红灯已定位为 Windows 临时 Git 仓库根路径误判；本地回归通过，待下一次分支推送执行远端复验。
 - 定制 Orca Release 构建成功，面板可从 Orca 主窗口启动。
 - helper 只监听 `127.0.0.1`；错误 token 返回 401，错误 Origin 返回 403。
 - ready state 不保存 session token。

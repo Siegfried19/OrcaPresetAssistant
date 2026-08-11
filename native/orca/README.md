@@ -176,6 +176,17 @@ helper 的打包契约是：`--serve` 绝不能创建 `BrowserWindow`，只能�
 - 能力声明明确返回 `scalarBehavior: broadcast-to-current-value-count`；
 - 数量不匹配错误会显示期望数量和实际收到的数量。
 
+## 第十四批参数可见性与验证元数据
+
+[0014-publish-parameter-visibility-and-verification.patch](patches/0014-publish-parameter-visibility-and-verification.patch)
+让原生能力声明成为面板与 Codex 插件的单一参数来源：
+
+- 每项能力同时发布 Orca 配置定义中的名称、分类和编辑模式；
+- 发布 `panelVisibility`，明确区分当前参数面板可见项与只能原生读写/回读的隐藏项；
+- `support_interface_loop_pattern` 标为 `hidden`，避免客户端给出不存在的面板路径；
+- 发布 `verification: orca-readback`，客户端只在原生回执和新 revision 数值匹配后显示成功；
+- Codex 插件直接消费这份能力声明，不再维护重复白名单。
+
 ## URL 配置
 
 默认页面：
@@ -227,6 +238,7 @@ git apply --check "$patchRoot\0010-enable-current-project-geometry-access.patch"
 git apply --check "$patchRoot\0011-explain-bambu-lan-developer-mode.patch"
 git apply --check "$patchRoot\0012-show-native-parameter-update-notice.patch"
 git apply --check "$patchRoot\0013-expand-write-whitelist-and-broadcast-scalars.patch"
+git apply --check "$patchRoot\0014-publish-parameter-visibility-and-verification.patch"
 ```
 
 不能在未应用前一批的原始源树上单独检查后续补丁。产品仓库验证使用临时导出的 Orca 基线依次应用前置补丁，不改动用户日常 Orca 安装。
@@ -240,7 +252,7 @@ git status --short --branch
 $patchRoot = (Resolve-Path ".\native\orca\patches").Path
 git apply --check "$patchRoot\0001-embed-preset-assistant-panel.patch"
 git apply --check "$patchRoot\0002-use-workspace-user-presets-root.patch"
-# 在临时基线上顺序应用 0001→0013；每一步先 check，再应用。
+# 在临时基线上顺序应用 0001→0014；每一步先 check，再应用。
 ```
 
 确认检查通过后应用：
@@ -259,6 +271,7 @@ git apply "$patchRoot\0010-enable-current-project-geometry-access.patch"
 git apply "$patchRoot\0011-explain-bambu-lan-developer-mode.patch"
 git apply "$patchRoot\0012-show-native-parameter-update-notice.patch"
 git apply "$patchRoot\0013-expand-write-whitelist-and-broadcast-scalars.patch"
+git apply "$patchRoot\0014-publish-parameter-visibility-and-verification.patch"
 ```
 
 应用后先核对范围：

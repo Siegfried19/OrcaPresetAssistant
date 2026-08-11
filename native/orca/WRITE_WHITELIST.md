@@ -1,6 +1,6 @@
-# Orca 原生写入白名单
+# Orca 原生受控写入能力
 
-本文是 `0005-expand-safe-process-filament-write-whitelist.patch` 的唯一参数清单。目标是覆盖普通工艺与耗材调整，不做任意参数编辑器。
+本文记录 Orca 原生层的受控写入规则。原生 `writeCapabilities` 是运行时唯一权威来源；Codex 插件和面板不得复制这份清单。目标是覆盖普通工艺与耗材调整，不做任意参数编辑器。
 
 ## 统一规则
 
@@ -12,6 +12,7 @@
 - 对象、嵌套数组、分号列表、空值、`nil`、非有限数值以及超范围值全部拒绝。
 - 整个 changes 对象全部验证通过后才一次应用，沿用 revision、预设 identity、保存验证和 rollback guard。
 - 能力声明中的 `valueShape` 会明确标注 `scalar` 或 `scalar-or-vector`；多值项同时声明 `scalarBehavior: broadcast-to-current-value-count`，范围由同一补丁中的 `WriteRule` 返回给面板。
+- 能力声明同时发布 `displayLabel`、`category`、`editorMode`、`panelVisibility` 和 `verification`。隐藏参数仍必须经过同一原生规则与回读验证，但客户端不得声称它在当前面板中可见。
 
 ## Process（47 项）
 

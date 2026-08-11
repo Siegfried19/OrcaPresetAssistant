@@ -1,13 +1,15 @@
 import { ArrowRight, Bot, ChevronRight } from 'lucide-react'
 
-import type { ChangeProposalView } from '@shared/contracts'
+import type { ChangeProposalView, OrcaWriteCapabilities } from '@shared/contracts'
 
 import { useI18n } from '../i18n/I18nProvider'
 import type { TranslationKey } from '../i18n/messages'
+import { parameterCapability } from '../lib/parameter-capabilities'
 
 interface ProposalSummaryBannerProps {
   readonly proposal: ChangeProposalView
   readonly targetName: string
+  readonly writeCapabilities: OrcaWriteCapabilities | null
   readonly onOpen: () => void
 }
 
@@ -18,6 +20,7 @@ function valueText(value: unknown): string {
 export function ProposalSummaryBanner({
   proposal,
   targetName,
+  writeCapabilities,
   onOpen,
 }: ProposalSummaryBannerProps): React.JSX.Element {
   const { t } = useI18n()
@@ -56,7 +59,15 @@ export function ProposalSummaryBanner({
       <div className="proposal-summary-diff" aria-label={t('proposal.notice.changesLabel')}>
         {keys.map((key) => (
           <div className="proposal-summary-row" key={key}>
-            <code>{key}</code>
+            <span className="proposal-summary-parameter">
+              <code>{key}</code>
+              {parameterCapability(writeCapabilities, proposal.presetKind, key)?.panelVisibility ===
+                'hidden' && (
+                <small className="parameter-visibility-hidden">
+                  {t('proposal.parameter.hidden')}
+                </small>
+              )}
+            </span>
             <span>{valueText(proposal.before[key])}</span>
             <ArrowRight aria-hidden="true" size={12} />
             <span>{valueText(proposal.after[key])}</span>

@@ -27,6 +27,20 @@ test('ordinary process and filament settings can be queued for panel approval', 
         source: 'orca-native',
         generatedAt: now,
         revision: '12',
+        writeCapabilities: {
+          process: {
+            access: 'controlled-write',
+            settings: [
+              { key: 'support_interface_speed' },
+              { key: 'support_interface_loop_pattern' },
+            ],
+          },
+          filament: {
+            access: 'controlled-write',
+            settings: [{ key: 'fan_cooling_layer_time' }],
+          },
+          machine: { access: 'read-only', settings: [] },
+        },
       }),
     )
 
@@ -77,9 +91,9 @@ test('ordinary process and filament settings can be queued for panel approval', 
           presetId: 'process:process/example.json',
           before: { machine_start_gcode: 'old' },
           after: { machine_start_gcode: 'new' },
-          reason: 'This must remain outside the ordinary whitelist.',
+          reason: 'This must remain outside the native capability set.',
         }),
-      /outside the controlled Orca write whitelist/,
+      /not present in Orca's controlled-write capabilities/,
     )
   } finally {
     if (previousUserData === undefined) {

@@ -4,10 +4,36 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
+import type { OrcaWriteCapabilities } from '../../shared/contracts'
+
 import { ChangeProposalStore } from './change-proposal-store'
 import { NativeStateStore } from './native-state-store'
 
 const roots: string[] = []
+
+const writeCapabilities: OrcaWriteCapabilities = {
+  process: {
+    access: 'controlled-write',
+    settings: [
+      {
+        key: 'layer_height',
+        valueShape: 'scalar',
+        kind: 'number',
+        minimum: 0.04,
+        maximum: null,
+        dynamicMaximum: '80-percent-of-smallest-active-nozzle',
+        unit: 'mm',
+        displayLabel: 'Layer height',
+        category: 'Quality',
+        editorMode: 'simple',
+        panelVisibility: 'visible',
+        verification: 'orca-readback',
+      },
+    ],
+  },
+  filament: { access: 'controlled-write', settings: [] },
+  machine: { access: 'read-only', settings: [] },
+}
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
@@ -39,6 +65,7 @@ describe('native state store', () => {
     const state = await store.publish('current-settings', {
       revision: 12,
       selections: selections(),
+      writeCapabilities,
       settings: { layer_height: '0.2' },
       project: { placement: [{ x: 1, y: 2 }] },
     })
@@ -71,6 +98,7 @@ describe('native state store', () => {
     await store.publish('general', {
       revision: 7,
       selections: selections(),
+      writeCapabilities,
       settings: { layer_height: '0.2' },
       project: { placement: [{ x: 1 }] },
     })
@@ -80,6 +108,7 @@ describe('native state store', () => {
     >
     expect(saved.revision).toBe('7')
     expect(saved.selections).toBeDefined()
+    expect(saved.writeCapabilities).toEqual(writeCapabilities)
     expect(saved.settings).toBeUndefined()
     expect(saved.project).toBeUndefined()
   })
@@ -107,6 +136,7 @@ describe('native state store', () => {
     const state = await store.publish('current-project', {
       revision: 13,
       selections: selections(),
+      writeCapabilities,
       settings: { layer_height: '0.2' },
       project,
     })

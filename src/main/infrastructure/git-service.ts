@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { readFile, realpath } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { promisify } from 'node:util'
 
@@ -12,12 +12,14 @@ const execFileAsync = promisify(execFile)
 interface GitCommandResult {
   readonly ok: boolean
   readonly stdout: string
+  readonly diagnostic?: string
 }
 
 export interface GitSnapshot {
   readonly isRepository: boolean
   readonly states: ReadonlyMap<string, string>
   readonly latestVersion: PresetVersionView | null
+  readonly diagnostic?: string
 }
 
 const PRESET_PATHS = ['machine', 'process', 'filament'] as const
@@ -32,6 +34,50 @@ function normalizeFsPath(path: string): string {
   return resolve(path).replaceAll('\\', '/').replace(/\/+$/u, '').toLocaleLowerCase('en-US')
 }
 
+async function canonicalFsPath(path: string): Promise<string> {
+  try {
+    return normalizeFsPath(await realpath(path))
+  } catch {
+    return normalizeFsPath(path)
+  }
+}
+
+async function pathsReferToSameLocation(left: string, right: string): Promise<boolean> {
+  const [canonicalLeft, canonicalRight] = await Promise.all([
+    canonicalFsPath(left),
+    canonicalFsPath(right),
+  ])
+  return canonicalLeft === canonicalRight
+}
+
+function errorText(value: unknown): string {
+  if (typeof value === 'string') return value.trim()
+  if (Buffer.isBuffer(value)) return value.toString('utf8').trim()
+  return ''
+}
+
+function gitFailureDiagnostic(error: unknown): string {
+  if (!(error instanceof Error)) return String(error)
+  const commandError = error as Error & { readonly stderr?: unknown; readonly stdout?: unknown }
+  return [error.message, errorText(commandError.stderr), errorText(commandError.stdout)]
+    .filter(Boolean)
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .join('\n')
+}
+
+function gitOperationError(code: string, diagnostic?: string): Error {
+  return diagnostic ? new Error(code, { cause: new Error(diagnostic) }) : new Error(code)
+}
+
+function unavailableGitSnapshot(diagnostic?: string): GitSnapshot {
+  return {
+    isRepository: false,
+    states: new Map(),
+    latestVersion: null,
+    ...(diagnostic ? { diagnostic } : {}),
+  }
+}
+
 async function runGit(rootPath: string, args: readonly string[]): Promise<GitCommandResult> {
   try {
     const { stdout } = await execFileAsync(
@@ -44,8 +90,13 @@ async function runGit(rootPath: string, args: readonly string[]): Promise<GitCom
       },
     )
     return { ok: true, stdout }
-  } catch {
-    return { ok: false, stdout: '' }
+  } catch (error) {
+    const commandError = error as { readonly stdout?: unknown }
+    return {
+      ok: false,
+      stdout: errorText(commandError.stdout),
+      diagnostic: gitFailureDiagnostic(error),
+    }
   }
 }
 
@@ -71,12 +122,13 @@ export function parsePorcelainStatus(output: string): Map<string, string> {
 
 export async function readGitSnapshot(rootPath: string): Promise<GitSnapshot> {
   const topLevel = await runGit(rootPath, ['rev-parse', '--show-toplevel'])
-  if (!topLevel.ok || normalizeFsPath(topLevel.stdout.trim()) !== normalizeFsPath(rootPath)) {
-    return {
-      isRepository: false,
-      states: new Map(),
-      latestVersion: null,
-    }
+  if (!topLevel.ok) return unavailableGitSnapshot(topLevel.diagnostic)
+
+  const reportedRoot = topLevel.stdout.trim()
+  if (!reportedRoot || !(await pathsReferToSameLocation(reportedRoot, rootPath))) {
+    return unavailableGitSnapshot(
+      `Git reported repository root "${reportedRoot || '<empty>'}" for "${rootPath}".`,
+    )
   }
 
   const result = await runGit(rootPath, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
@@ -86,6 +138,7 @@ export async function readGitSnapshot(rootPath: string): Promise<GitSnapshot> {
     isRepository: result.ok,
     states: result.ok ? parsePorcelainStatus(result.stdout) : new Map(),
     latestVersion: latestVersion ?? null,
+    ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}),
   }
 }
 
@@ -129,7 +182,7 @@ export async function readPresetVersions(
 
 async function requirePresetRepository(rootPath: string): Promise<void> {
   const snapshot = await readGitSnapshot(rootPath)
-  if (!snapshot.isRepository) throw new Error('git-unavailable')
+  if (!snapshot.isRepository) throw gitOperationError('git-unavailable', snapshot.diagnostic)
 }
 
 async function hasPresetChanges(rootPath: string): Promise<boolean> {
@@ -141,13 +194,13 @@ async function hasPresetChanges(rootPath: string): Promise<boolean> {
     '--',
     ...PRESET_PATHS,
   ])
-  if (!result.ok) throw new Error('git-operation-failed')
+  if (!result.ok) throw gitOperationError('git-operation-failed', result.diagnostic)
   return Boolean(result.stdout)
 }
 
 async function hasStagedChangesOutsidePresets(rootPath: string): Promise<boolean> {
   const result = await runGit(rootPath, ['diff', '--cached', '--name-only', '-z'])
-  if (!result.ok) throw new Error('git-operation-failed')
+  if (!result.ok) throw gitOperationError('git-operation-failed', result.diagnostic)
   return result.stdout
     .split('\0')
     .filter(Boolean)
@@ -164,7 +217,7 @@ async function trackedPresetPaths(rootPath: string, revision: string): Promise<r
     '--',
     ...PRESET_PATHS,
   ])
-  if (!result.ok) throw new Error('git-history-not-found')
+  if (!result.ok) throw gitOperationError('git-history-not-found', result.diagnostic)
   return result.stdout.split('\0').filter(Boolean)
 }
 
@@ -185,14 +238,14 @@ async function commitIdentityArgs(rootPath: string): Promise<readonly string[]> 
 async function commitPresetPaths(rootPath: string, message: string): Promise<void> {
   const identity = await commitIdentityArgs(rootPath)
   const result = await runGit(rootPath, [...identity, 'commit', '-m', message])
-  if (!result.ok) throw new Error('git-operation-failed')
+  if (!result.ok) throw gitOperationError('git-operation-failed', result.diagnostic)
 }
 
 export async function initializePresetRepository(rootPath: string): Promise<void> {
   const current = await readGitSnapshot(rootPath)
   if (current.isRepository) return
   const result = await runGit(rootPath, ['init'])
-  if (!result.ok) throw new Error('git-operation-failed')
+  if (!result.ok) throw gitOperationError('git-operation-failed', result.diagnostic)
   await requirePresetRepository(rootPath)
 }
 
@@ -207,7 +260,7 @@ export async function savePresetVersion(rootPath: string, message: string): Prom
   }
   if (!(await hasPresetChanges(rootPath))) throw new Error('git-nothing-to-save')
   const staged = await runGit(rootPath, ['add', '--all', '--', ...PRESET_PATHS])
-  if (!staged.ok) throw new Error('git-operation-failed')
+  if (!staged.ok) throw gitOperationError('git-operation-failed', staged.diagnostic)
   await commitPresetPaths(rootPath, normalizedMessage)
 }
 
@@ -220,10 +273,12 @@ export async function restorePresetVersion(rootPath: string, revision: string): 
   if (await hasPresetChanges(rootPath)) throw new Error('git-working-tree-dirty')
 
   const reachable = await runGit(rootPath, ['merge-base', '--is-ancestor', revision, 'HEAD'])
-  if (!reachable.ok) throw new Error('git-history-not-found')
+  if (!reachable.ok) throw gitOperationError('git-history-not-found', reachable.diagnostic)
   const target = await runGit(rootPath, ['show', '-s', '--format=%h%x1f%s', revision])
   const [shortRevision, ...subjectParts] = target.stdout.trim().split(VERSION_RECORD_SEPARATOR)
-  if (!target.ok || !shortRevision) throw new Error('git-history-not-found')
+  if (!target.ok || !shortRevision) {
+    throw gitOperationError('git-history-not-found', target.diagnostic)
+  }
 
   const [currentPaths, targetPaths] = await Promise.all([
     trackedPresetPaths(rootPath, 'HEAD'),
@@ -239,7 +294,7 @@ export async function restorePresetVersion(rootPath: string, revision: string): 
     '--',
     ...paths,
   ])
-  if (!restored.ok) throw new Error('git-operation-failed')
+  if (!restored.ok) throw gitOperationError('git-operation-failed', restored.diagnostic)
   if (!(await hasPresetChanges(rootPath))) throw new Error('git-nothing-to-save')
 
   const subject = subjectParts.join(VERSION_RECORD_SEPARATOR)

@@ -489,11 +489,12 @@ export class DashboardService {
     }
 
     const paths = workspacePaths(this.root.path)
-    const [presets, gitSnapshot, orcaExecutable, printHistory] = await Promise.all([
+    const [presets, gitSnapshot, orcaExecutable, printHistory, nativeState] = await Promise.all([
       scanPresets(paths.userPresets),
       readGitSnapshot(paths.userPresets),
       findOrcaExecutable(),
       listPrintHistory(this.root.path),
+      this.nativeStateStore.readFresh(),
     ])
     await Promise.all([
       applyGitState(paths.userPresets, presets, gitSnapshot),
@@ -539,6 +540,7 @@ export class DashboardService {
       presets: views,
       printHistory,
       settings: settingsView(this.config, this.sessionCodexScope),
+      writeCapabilities: nativeState?.writeCapabilities ?? null,
       changeProposals,
       warnings,
     }
@@ -571,6 +573,7 @@ export class DashboardService {
       presets: [],
       printHistory: [],
       settings: settingsView(this.config, this.sessionCodexScope),
+      writeCapabilities: null,
       changeProposals: [],
       warnings: ['workspace-not-found'],
     }

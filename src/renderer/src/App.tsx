@@ -355,6 +355,7 @@ export function App(): React.JSX.Element {
                       }}
                       proposal={latestActionableProposal}
                       targetName={latestActionableTargetName}
+                      writeCapabilities={snapshot.writeCapabilities}
                     />
                   )}
 
@@ -443,6 +444,7 @@ export function App(): React.JSX.Element {
                   preset={selectedPreset}
                   proposal={selectedProposal}
                   proposalTargetName={proposalTargetName}
+                  writeCapabilities={snapshot.writeCapabilities}
                 />
               )}
             </>

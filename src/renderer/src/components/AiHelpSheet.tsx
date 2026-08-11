@@ -1,4 +1,12 @@
-import { CircleHelp, Database, FolderOpen, Lightbulb, ShieldCheck, X } from 'lucide-react'
+import {
+  CircleHelp,
+  Database,
+  FolderOpen,
+  FolderPlus,
+  Lightbulb,
+  ShieldCheck,
+  X,
+} from 'lucide-react'
 import { useEffect } from 'react'
 
 import { useI18n } from '../i18n/I18nProvider'
@@ -49,6 +57,17 @@ export function AiHelpSheet({ onClose }: AiHelpSheetProps): React.JSX.Element {
         </header>
 
         <div className="ai-help-content">
+          <section>
+            <h3>
+              <FolderPlus aria-hidden="true" size={17} /> {t('help.workspaceTitle')}
+            </h3>
+            <ol>
+              <li>{t('help.workspace.choose')}</li>
+              <li>{t('help.workspace.structure')}</li>
+              <li>{t('help.workspace.guidance')}</li>
+            </ol>
+          </section>
+
           <section>
             <h3>
               <CircleHelp aria-hidden="true" size={17} /> {t('help.firstUse')}

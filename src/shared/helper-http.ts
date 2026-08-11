@@ -6,6 +6,7 @@ import type {
   GuardProposalRollbackRequest,
   Language,
   OrcaEffectiveSettingsSnapshot,
+  OrcaWriteCapabilities,
   ParameterSnapshot,
   PresetDiff,
   PresetVersionView,
@@ -91,6 +92,7 @@ export type HelperJsonValue =
 export interface PublishNativeStateRequest {
   readonly revision: number
   readonly selections: OrcaEffectiveSettingsSnapshot['selections']
+  readonly writeCapabilities: OrcaWriteCapabilities
   readonly settings?: ParameterSnapshot
   readonly project?: Readonly<Record<string, HelperJsonValue>>
 }
@@ -101,6 +103,7 @@ export interface PublishedNativeState {
   readonly generatedAt: string
   readonly revision: string
   readonly selections: OrcaEffectiveSettingsSnapshot['selections']
+  readonly writeCapabilities: OrcaWriteCapabilities
   readonly settings?: ParameterSnapshot
   readonly project?: Readonly<Record<string, HelperJsonValue>>
 }

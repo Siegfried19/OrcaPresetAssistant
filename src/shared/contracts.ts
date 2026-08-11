@@ -41,6 +41,10 @@ export type ChangeDestination = 'current-project' | 'update-current-preset' | 's
 export type ChangeProposalStatus = 'pending' | 'applied' | 'rejected' | 'failed' | 'rolled-back'
 export type ParameterValue = string | number | boolean | readonly ParameterValue[] | null
 export type ParameterSnapshot = Readonly<Record<string, ParameterValue>>
+export type ParameterValueShape = 'scalar' | 'scalar-or-vector'
+export type ParameterScalarKind = 'boolean' | 'integer' | 'number' | 'percent'
+export type ParameterPanelVisibility = 'visible' | 'hidden'
+export type ParameterEditorMode = 'simple' | 'advanced' | 'expert' | 'developer'
 export type PrintCaptureQuality = 'orca-effective' | 'custom-presets-only'
 export type ValidationIssue =
   | 'json-root-not-object'
@@ -204,6 +208,33 @@ export interface OrcaEffectiveSettingsSnapshot {
   readonly selections: OrcaPresetSelections
 }
 
+export interface OrcaWriteSettingCapability {
+  readonly key: string
+  readonly valueShape: ParameterValueShape
+  readonly kind: ParameterScalarKind
+  readonly minimum: number
+  readonly maximum: number | null
+  readonly dynamicMaximum?: string
+  readonly unit: string
+  readonly scalarBehavior?: 'broadcast-to-current-value-count'
+  readonly displayLabel: string
+  readonly category: string
+  readonly editorMode: ParameterEditorMode
+  readonly panelVisibility: ParameterPanelVisibility
+  readonly verification: 'orca-readback'
+}
+
+export interface OrcaPresetWriteCapability {
+  readonly access: 'controlled-write' | 'read-only'
+  readonly settings: readonly OrcaWriteSettingCapability[]
+}
+
+export interface OrcaWriteCapabilities {
+  readonly process: OrcaPresetWriteCapability
+  readonly filament: OrcaPresetWriteCapability
+  readonly machine: OrcaPresetWriteCapability
+}
+
 export interface CodexPermissionsView {
   readonly scope: CodexPermissionScope
   readonly fileGrants: readonly string[]
@@ -253,6 +284,7 @@ export interface DashboardSnapshot {
   readonly presets: readonly PresetView[]
   readonly printHistory: readonly PrintHistoryView[]
   readonly settings: AppSettingsView
+  readonly writeCapabilities: OrcaWriteCapabilities | null
   readonly changeProposals: readonly ChangeProposalView[]
   readonly warnings: readonly DashboardWarning[]
 }

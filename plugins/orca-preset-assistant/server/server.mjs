@@ -33,7 +33,7 @@ const tools = [
   {
     name: 'get_current_orca_settings',
     description:
-      'Read fresh effective settings from Orca without geometry. Requires current-settings.',
+      'Read fresh effective settings and authoritative writable-parameter metadata from Orca without geometry. Requires current-settings.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -150,6 +150,7 @@ function currentProjectResult(live) {
     revision: live.revision,
     selections: live.selections,
     settings: live.settings,
+    writeCapabilities: live.writeCapabilities,
     project: live.project,
     modelGeometry: {
       sourceCount: allSources.length,
@@ -183,6 +184,7 @@ function callTool(name, input = {}) {
       revision: live.revision,
       selections: live.selections,
       settings: live.settings,
+      writeCapabilities: live.writeCapabilities,
     }
   }
   if (name === 'get_current_project_layout') {
