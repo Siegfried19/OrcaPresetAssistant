@@ -12,7 +12,7 @@
 - 提案面板会标记当前 Orca 没有可见控件的隐藏参数；只有原生回执和新 revision 中的数值都匹配时，才显示“已应用并验证”。
 - 修复 Windows CI 临时 Git 仓库可能因路径别名被误判为不可用的问题；Git 调用失败时保留原始诊断作为错误原因。
 
-验证状态：本地自动化验证通过，GitHub Actions 仍需在推送后远端复验；最终结果记录到 `docs/VALIDATION.md`。
+验证状态：本地自动化验证与 GitHub Actions 远端 `Quality` 均通过；最终结果记录到 `docs/VALIDATION.md`。
 
 ## 2026-08-10
 

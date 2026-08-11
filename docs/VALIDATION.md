@@ -16,7 +16,7 @@
 - 新增补丁 `0014` 已在累计原生源码上通过反向 `git apply --check`，并完成 Release 编译和定向测试；发布前仍需执行 0001→0014 的全新临时基线重放。
 - Windows portable 面板与完整 unpacked helper 成功构建。
 - 当前 Electron helper 生产构建成功，TypeScript、ESLint 和 Prettier 全部通过。
-- 历史 GitHub Actions 红灯已定位为 Windows 临时 Git 仓库根路径误判；本地回归通过，待下一次分支推送执行远端复验。
+- 历史 GitHub Actions 红灯已定位为 Windows 临时 Git 仓库根路径误判；修复后的分支推送已通过远端 `Quality` 全部步骤。
 - 定制 Orca Release 构建成功，面板可从 Orca 主窗口启动。
 - helper 只监听 `127.0.0.1`；错误 token 返回 401，错误 Origin 返回 403。
 - ready state 不保存 session token。
