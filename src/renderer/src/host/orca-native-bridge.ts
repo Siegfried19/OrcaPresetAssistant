@@ -515,19 +515,44 @@ export async function refreshOrcaUserPresets(
   bridge: OrcaNativeBridge,
   changes: readonly PresetFileChangeView[],
 ): Promise<OrcaNativeEnvelope<OrcaPresetRefreshResult>> {
-  return parseNativeEnvelope(
-    await bridge.request('presets.refresh', {
-      targets: changes.map((change) => ({
-        id: change.id,
-        presetKind: change.presetKind,
-        presetName: change.presetName,
-        relativePath: change.relativePath,
-        keys: Object.keys(change.after),
-        removedKeys: change.removedKeys,
-      })),
-    }),
-    isPresetRefreshResult,
-  )
+  const batchSize = 32
+  const batches =
+    changes.length === 0
+      ? [[]]
+      : Array.from({ length: Math.ceil(changes.length / batchSize) }, (_, index) =>
+          changes.slice(index * batchSize, (index + 1) * batchSize),
+        )
+  const targets: OrcaPresetRefreshTargetResult[] = []
+  const removed: OrcaPresetRefreshResult['removed'][number][] = []
+  let latest: OrcaNativeEnvelope<OrcaPresetRefreshResult> | null = null
+
+  for (const batch of batches) {
+    latest = parseNativeEnvelope(
+      await bridge.request('presets.refresh', {
+        targets: batch.map((change) => ({
+          id: change.id,
+          presetKind: change.presetKind,
+          presetName: change.presetName,
+          relativePath: change.relativePath,
+          keys: Object.keys(change.after),
+          removedKeys: change.removedKeys,
+        })),
+      }),
+      isPresetRefreshResult,
+    )
+    targets.push(...latest.data.targets)
+    removed.push(...latest.data.removed)
+  }
+
+  if (!latest) throw new Error('invalid-orca-native-response')
+  return {
+    ...latest,
+    data: {
+      ...latest.data,
+      targets,
+      removed,
+    },
+  }
 }
 
 export async function applyOrcaProposal(

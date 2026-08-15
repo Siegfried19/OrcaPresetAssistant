@@ -304,4 +304,83 @@ describe('Orca native bridge boundary', () => {
     })
     expect(request).toHaveBeenCalledWith('presets.refresh', { targets: [] })
   })
+
+  it('batches more than 32 written changes while preserving every native receipt', async () => {
+    const changes = Array.from({ length: 33 }, (_, index) => ({
+      id: `change-${index + 1}`,
+      createdAt: '2026-08-12T12:00:00.000Z',
+      updatedAt: '2026-08-12T12:01:00.000Z',
+      operation: 'update' as const,
+      presetKind: 'process' as const,
+      presetName: `Quality ${index + 1}`,
+      relativePath: `process/Quality ${index + 1}.json`,
+      sourceRelativePath: null,
+      before: { outer_wall_speed: '60' },
+      after: { outer_wall_speed: '55' },
+      removedKeys: [],
+      reason: 'Reduce surface drag.',
+      status: 'written' as const,
+      beforeFileHash: 'before',
+      writtenFileHash: 'after',
+      authoritativeRevision: null,
+      error: null,
+    }))
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        requestId: 'refresh-3a',
+        ok: true,
+        revision: 18,
+        data: {
+          authority: 'orca',
+          status: 'synchronized',
+          targets: changes.slice(0, 32).map((change) => ({
+            id: change.id,
+            presetKind: change.presetKind,
+            presetName: change.presetName,
+            relativePath: change.relativePath,
+            created: false,
+            selected: false,
+            values: change.after,
+            absentKeys: [],
+          })),
+          removed: [],
+        },
+      })
+      .mockResolvedValueOnce({
+        requestId: 'refresh-3b',
+        ok: true,
+        revision: 19,
+        data: {
+          authority: 'orca',
+          status: 'synchronized',
+          targets: changes.slice(32).map((change) => ({
+            id: change.id,
+            presetKind: change.presetKind,
+            presetName: change.presetName,
+            relativePath: change.relativePath,
+            created: false,
+            selected: false,
+            values: change.after,
+            absentKeys: [],
+          })),
+          removed: [],
+        },
+      })
+
+    await expect(
+      refreshOrcaUserPresets({ available: true, revision: 17, request }, changes),
+    ).resolves.toMatchObject({
+      requestId: 'refresh-3b',
+      revision: 19,
+      data: {
+        targets: expect.arrayContaining(
+          changes.map((change) => expect.objectContaining({ id: change.id })),
+        ),
+      },
+    })
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(request.mock.calls[0]?.[1]).toMatchObject({ targets: { length: 32 } })
+    expect(request.mock.calls[1]?.[1]).toMatchObject({ targets: { length: 1 } })
+  })
 })
