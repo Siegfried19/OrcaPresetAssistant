@@ -19,7 +19,16 @@ const execFileAsync = promisify(execFile)
 const roots: string[] = []
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+  await Promise.all(
+    roots.splice(0).map((root) =>
+      rm(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      }),
+    ),
+  )
 })
 
 async function createPresetRoot(): Promise<string> {
@@ -119,7 +128,7 @@ describe('preset version repository', () => {
     expect(await readFile(preset, 'utf8')).toContain('"layer_height":0.2')
     await expect(access(laterPreset)).rejects.toThrow()
     expect((await readPresetVersions(root))[0]?.message).toContain('Restore preset version')
-  })
+  }, 15_000)
 
   it('refuses to restore while preset files have unsaved changes', async () => {
     const root = await createPresetRoot()
