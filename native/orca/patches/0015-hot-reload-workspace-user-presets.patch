@@ -1,0 +1,601 @@
+diff --git a/src/libslic3r/Preset.cpp b/src/libslic3r/Preset.cpp
+index 775c31b5..7818e12b 100644
+--- a/src/libslic3r/Preset.cpp
++++ b/src/libslic3r/Preset.cpp
+@@ -1828,6 +1828,146 @@ void PresetCollection::load_presets(
+         throw Slic3r::RuntimeError(errors_cummulative);
+ }
+ 
++std::pair<Preset*, bool> PresetCollection::reload_user_preset_from_file(
++    const std::string &path,
++    const std::string &expected_name,
++    ForwardCompatibilitySubstitutionRule substitution_rule)
++{
++    const PresetOrigin user_origin(PresetOrigin::Kind::User);
++    const std::string canonical_name = this->canonical_preset_name(expected_name, user_origin);
++    fs::path source = fs::absolute(fs::path(path)).make_preferred();
++    if (!fs::exists(source) || !fs::is_regular_file(source) || !Slic3r::is_json_file(source.filename().string()))
++        throw Slic3r::RuntimeError("User preset JSON does not exist: " + source.string());
++    fs::path source_info(source);
++    source_info.replace_extension(".info");
++    if (!fs::exists(source_info) || !fs::is_regular_file(source_info))
++        throw Slic3r::RuntimeError("User preset metadata does not exist: " + source_info.string());
++
++    Preset *existing = this->find_preset(canonical_name, false, true);
++    const bool created = existing == nullptr;
++    const bool selected = !created && this->get_selected_preset().name == canonical_name;
++    if (existing != nullptr &&
++        (existing->is_system || existing->is_default || existing->is_project_embedded || !existing->is_user()))
++        throw Slic3r::RuntimeError("Only an existing user preset may be hot-reloaded");
++    if (selected && this->current_is_dirty())
++        throw Slic3r::RuntimeError("The selected preset has unsaved Orca edits");
++
++    const fs::path temporary_dir = fs::temp_directory_path() /
++        fs::unique_path("orca-preset-reload-%%%%-%%%%-%%%%");
++    fs::create_directories(temporary_dir);
++    struct TemporaryDirectoryGuard {
++        fs::path path;
++        ~TemporaryDirectoryGuard() {
++            boost::system::error_code ignored;
++            fs::remove_all(path, ignored);
++        }
++    } cleanup{temporary_dir};
++
++    const fs::path temporary_json = temporary_dir / source.filename();
++    fs::path temporary_info(temporary_json);
++    temporary_info.replace_extension(".info");
++    fs::copy_file(source, temporary_json, fs::copy_option::overwrite_if_exists);
++    fs::copy_file(source_info, temporary_info, fs::copy_option::overwrite_if_exists);
++
++    PresetCollection scratch;
++    scratch = *this;
++    auto scratch_existing = scratch.find_preset_internal(canonical_name);
++    if (scratch_existing != scratch.m_presets.end() && scratch_existing->name == canonical_name)
++        scratch.m_presets.erase(scratch_existing);
++    scratch.m_idx_selected = 0;
++    scratch.m_edited_preset = scratch.m_presets.front();
++    scratch.m_saved_preset = scratch.m_presets.front();
++
++    PresetsConfigSubstitutions substitutions;
++    scratch.load_presets(
++        temporary_dir.string(),
++        "",
++        substitutions,
++        substitution_rule,
++        nullptr,
++        user_origin);
++    Preset *parsed = scratch.find_preset(canonical_name, false, true);
++    if (parsed == nullptr || !parsed->loaded)
++        throw Slic3r::RuntimeError("Orca could not parse the user preset");
++    Preset replacement(*parsed);
++    replacement.file = source.string();
++
++    const std::string selected_name_before = this->get_selected_preset().name;
++    const Preset edited_before(m_edited_preset);
++    const Preset saved_before(m_saved_preset);
++    if (existing != nullptr) {
++        auto existing_it = this->find_preset_internal(canonical_name);
++        if (existing_it == m_presets.end() || existing_it->name != canonical_name)
++            throw Slic3r::RuntimeError("The existing user preset could not be located");
++        m_presets.erase(existing_it);
++    }
++    m_presets.emplace_back(std::move(replacement));
++    sort_presets();
++    Preset *reloaded = this->find_preset(canonical_name, false, true);
++    if (reloaded == nullptr)
++        throw Slic3r::RuntimeError("The reloaded user preset was not registered");
++    set_custom_preset_alias(*reloaded);
++
++    if (selected) {
++        if (!this->select_preset_by_name(canonical_name, true))
++            throw Slic3r::RuntimeError("The selected user preset could not be refreshed");
++    } else {
++        auto selected_it = this->find_preset_internal(selected_name_before);
++        if (selected_it == m_presets.end() || selected_it->name != selected_name_before)
++            throw Slic3r::RuntimeError("The previous preset selection was lost");
++        m_idx_selected = static_cast<size_t>(std::distance(m_presets.begin(), selected_it));
++        m_edited_preset = edited_before;
++        m_saved_preset = saved_before;
++    }
++    return {reloaded, created};
++}
++
++bool PresetCollection::unload_user_preset(
++    const std::string &name,
++    const std::string &replacement_name)
++{
++    Preset *existing = this->find_preset(name, false, true);
++    if (existing == nullptr)
++        return false;
++    if (existing->is_system || existing->is_default || existing->is_project_embedded || !existing->is_user())
++        throw Slic3r::RuntimeError("Only a workspace user preset may be hot-unloaded");
++
++    const std::string canonical_name = existing->name;
++    const bool selected = this->get_selected_preset().name == canonical_name;
++    if (selected && this->current_is_dirty())
++        throw Slic3r::RuntimeError("The selected preset has unsaved Orca edits");
++    for (const Preset &candidate : m_presets)
++        if (candidate.name != canonical_name && candidate.inherits() == canonical_name)
++            throw Slic3r::RuntimeError("A preset inherited by another preset cannot be hot-unloaded");
++
++    const std::string selected_after = selected ? replacement_name : this->get_selected_preset().name;
++    auto selected_after_it = this->find_preset_internal(this->canonical_preset_name(selected_after));
++    if (selected_after.empty() || selected_after == canonical_name ||
++        selected_after_it == m_presets.end() || selected_after_it->name != selected_after ||
++        !selected_after_it->is_visible)
++        throw Slic3r::RuntimeError("A safe replacement preset is unavailable");
++
++    const Preset edited_before(m_edited_preset);
++    const Preset saved_before(m_saved_preset);
++    auto existing_it = this->find_preset_internal(canonical_name);
++    if (existing_it == m_presets.end() || existing_it->name != canonical_name)
++        throw Slic3r::RuntimeError("The user preset could not be located");
++    m_presets.erase(existing_it);
++
++    selected_after_it = this->find_preset_internal(this->canonical_preset_name(selected_after));
++    if (selected_after_it == m_presets.end() || selected_after_it->name != selected_after)
++        throw Slic3r::RuntimeError("The previous preset selection was lost");
++    const size_t selected_after_idx = static_cast<size_t>(std::distance(m_presets.begin(), selected_after_it));
++    if (selected) {
++        this->select_preset(selected_after_idx);
++    } else {
++        m_idx_selected = selected_after_idx;
++        m_edited_preset = edited_before;
++        m_saved_preset = saved_before;
++    }
++    return true;
++}
++
+ //BBS: add function to generate differed preset for save
+ //the pointer should be freed by the caller
+ Preset* PresetCollection::get_preset_differed_for_save(Preset& preset)
+diff --git a/src/libslic3r/Preset.hpp b/src/libslic3r/Preset.hpp
+index b88b5a5e..f6e9295c 100644
+--- a/src/libslic3r/Preset.hpp
++++ b/src/libslic3r/Preset.hpp
+@@ -536,6 +536,13 @@ public:
+ 
+     // Load ini files of the particular type from the provided directory path.
+     void            load_presets(const std::string &dir_path, const std::string &subdir, PresetsConfigSubstitutions& substitutions, ForwardCompatibilitySubstitutionRule rule, std::function<void(Preset&)> preset_loaded_fn = nullptr, const PresetOrigin &load_origin = PresetOrigin());
++    // Transactionally parse one user preset from disk and add or replace its in-memory copy.
++    // Parsing uses a temporary copy so a malformed source file is never deleted by the legacy loader.
++    // The bool result is true when a new preset was added.
++    std::pair<Preset*, bool> reload_user_preset_from_file(const std::string &path, const std::string &expected_name, ForwardCompatibilitySubstitutionRule rule);
++    // Remove one user preset from memory without touching its files. When the preset is selected,
++    // replacement_name must name a visible preset that becomes active instead.
++    bool            unload_user_preset(const std::string &name, const std::string &replacement_name = {});
+ 
+     //BBS: update user presets directory
+     void            update_user_presets_directory(const std::string& dir_path, const std::string& type);
+diff --git a/src/slic3r/GUI/PresetAssistantBridge.cpp b/src/slic3r/GUI/PresetAssistantBridge.cpp
+index 06f0674a..0f003dfc 100644
+--- a/src/slic3r/GUI/PresetAssistantBridge.cpp
++++ b/src/slic3r/GUI/PresetAssistantBridge.cpp
+@@ -13,6 +13,7 @@
+ #include <algorithm>
+ #include <array>
+ #include <chrono>
++#include <cctype>
+ #include <cmath>
+ #include <iomanip>
+ #include <memory>
+@@ -20,12 +21,14 @@
+ #include <sstream>
+ #include <stdexcept>
+ #include <unordered_set>
++#include <vector>
+ 
+ #include <boost/algorithm/string/case_conv.hpp>
+ #include <boost/algorithm/string/predicate.hpp>
+ #include <boost/algorithm/string/trim.hpp>
+ #include <boost/filesystem.hpp>
+ #include <boost/log/trivial.hpp>
++#include <boost/nowide/fstream.hpp>
+ #include <boost/uuid/uuid_generators.hpp>
+ #include <boost/uuid/uuid_io.hpp>
+ 
+@@ -1270,11 +1273,12 @@ json PresetAssistantBridge::settings_get(const json& params)
+                           "settings.get requires settings:read authorization");
+ 
+     PresetBundle& bundle = require_bundle();
++    // The capability catalog is returned by state.get. Avoid duplicating it here:
++    // effective settings already make this the largest WebView bridge response.
+     return {
+         {"authorization", "settings:read"},
+         {"presets", current_preset_state(bundle)},
+         {"effective", serialized_settings(bundle.full_config())},
+-        {"writeCapabilities", write_capabilities()},
+         {"modelGeometryIncluded", false},
+     };
+ }
+@@ -1465,13 +1469,235 @@ json PresetAssistantBridge::workspace_choose(const json& params)
+ 
+ json PresetAssistantBridge::presets_refresh(const json& params)
+ {
+-    reject_unknown_keys(params, {}, "presets.refresh params");
+-    // Repeating load_user_presets() skips duplicate names and would present a
+-    // false success. Until a full user-only unload/reload transaction exists,
+-    // an explicit restart is the only authoritative refresh.
+-    throw BridgeError(
+-        "RESTART_REQUIRED",
+-        "Safe preset refresh requires restarting Orca; no files were reloaded");
++    reject_unknown_keys(params, {"targets"}, "presets.refresh params");
++    if (!params.contains("targets") || !params["targets"].is_array() ||
++        params["targets"].size() > 32)
++        throw BridgeError("INVALID_REQUEST", "presets.refresh requires 0 to 32 targets");
++
++    PresetBundle& bundle = require_bundle();
++    if (!bundle.has_external_user_presets_root())
++        throw BridgeError("WORKSPACE_NOT_ACTIVE",
++                          "Preset refresh requires an active external workspace");
++    const fs::path user_root = fs::absolute(bundle.external_user_presets_root())
++                                   .lexically_normal()
++                                   .make_preferred();
++
++    json loaded = json::array();
++    json removed = json::array();
++    json errors = json::array();
++    std::set<std::string> refreshed_types;
++    std::set<std::string> selected_removed_types;
++    for (const json& target : params["targets"]) {
++        std::string id;
++        try {
++            reject_unknown_keys(
++                target,
++                {"id", "presetKind", "presetName", "relativePath", "keys", "removedKeys"},
++                "presets.refresh target");
++            id = require_string(target, "id");
++            const std::string preset_type = require_string(target, "presetKind");
++            const std::string preset_name = require_string(target, "presetName");
++            const std::string relative_path = require_string(target, "relativePath");
++            if (preset_name != validated_new_preset_name({{"newName", preset_name}}))
++                throw BridgeError("INVALID_PRESET_NAME", "Preset name is invalid");
++            if (preset_type != "process" && preset_type != "filament")
++                (void) writable_preset_type(preset_type);
++            if (!target.contains("keys") || !target["keys"].is_array() ||
++                target["keys"].empty() || target["keys"].size() > 256 ||
++                !target.contains("removedKeys") || !target["removedKeys"].is_array())
++                throw BridgeError("INVALID_REQUEST", "Refresh target keys are invalid");
++
++            std::set<std::string> requested_keys;
++            for (const json& value : target["keys"]) {
++                if (!value.is_string())
++                    throw BridgeError("INVALID_REQUEST", "Refresh keys must be strings");
++                const std::string key = value.get<std::string>();
++                if (key.empty() || key.size() > 128 ||
++                    !std::all_of(key.begin(), key.end(), [](unsigned char ch) {
++                        return std::isalnum(ch) || ch == '_';
++                    }) || !requested_keys.insert(key).second)
++                    throw BridgeError("INVALID_REQUEST", "Refresh key is invalid or duplicated");
++            }
++            std::set<std::string> requested_absent;
++            for (const json& value : target["removedKeys"]) {
++                if (!value.is_string() ||
++                    requested_keys.find(value.get<std::string>()) == requested_keys.end() ||
++                    !requested_absent.insert(value.get<std::string>()).second)
++                    throw BridgeError("INVALID_REQUEST", "Removed refresh key is invalid");
++            }
++
++            const std::string expected_relative =
++                preset_type + "/" + preset_name + ".json";
++            if (relative_path != expected_relative)
++                throw BridgeError("INVALID_PRESET_PATH",
++                                  "Refresh path must match the preset kind and name");
++            const fs::path kind_root = user_root / preset_type;
++            const fs::path source = fs::absolute(user_root / fs::path(relative_path))
++                                        .lexically_normal()
++                                        .make_preferred();
++            if (!path_is_within(source, kind_root) ||
++                normalized_path_for_compare(source.parent_path()) !=
++                    normalized_path_for_compare(kind_root) ||
++                !fs::exists(source) || !fs::is_regular_file(source) || fs::is_symlink(source))
++                throw BridgeError("INVALID_PRESET_PATH",
++                                  "Refresh target is not a regular workspace preset file");
++            fs::path info_path(source);
++            info_path.replace_extension(".info");
++            if (!fs::exists(info_path) || !fs::is_regular_file(info_path) ||
++                fs::is_symlink(info_path))
++                throw BridgeError("INVALID_PRESET_PATH",
++                                  "Refresh target has no regular .info metadata file");
++
++            boost::nowide::ifstream input(source.string());
++            if (!input)
++                throw BridgeError("PRESET_READ_FAILED", "Unable to read the preset JSON");
++            json raw;
++            input >> raw;
++            if (!raw.is_object())
++                throw BridgeError("INVALID_PRESET_FILE", "Preset JSON root must be an object");
++            auto identity_value = [&](const char* key) -> std::string {
++                auto it = raw.find(key);
++                if (it == raw.end()) return {};
++                if (it->is_string()) return it->get<std::string>();
++                if (it->is_array() && it->size() == 1 && (*it)[0].is_string())
++                    return (*it)[0].get<std::string>();
++                return {};
++            };
++            const char* settings_id_key =
++                preset_type == "process" ? "print_settings_id" : "filament_settings_id";
++            if (identity_value("name") != preset_name ||
++                identity_value(settings_id_key) != preset_name)
++                throw BridgeError("INVALID_PRESET_FILE",
++                                  "Preset filename, name, and settings ID must match");
++
++            Tab& tab = require_preset_tab(preset_type);
++            PresetCollection& collection = *tab.get_presets();
++            const bool selected = collection.get_selected_preset().name == preset_name;
++            const auto reloaded = collection.reload_user_preset_from_file(
++                source.string(),
++                preset_name,
++                ForwardCompatibilitySubstitutionRule::EnableSilent);
++
++            json values = json::object();
++            json absent_keys = json::array();
++            for (const std::string& key : requested_keys) {
++                auto value = raw.find(key);
++                if (value == raw.end()) absent_keys.push_back(key);
++                else {
++                    const ConfigOption* loaded_option = reloaded.first->config.option(key);
++                    if (loaded_option == nullptr)
++                        throw BridgeError("PRESET_READBACK_FAILED",
++                                          "A written parameter was not loaded by Orca");
++                    values[key] = loaded_option->serialize();
++                }
++            }
++            for (const std::string& key : requested_absent)
++                if (raw.contains(key))
++                    throw BridgeError("PRESET_READBACK_FAILED",
++                                      "A parameter expected to inherit is still present");
++
++            refreshed_types.insert(preset_type);
++            loaded.push_back({
++                {"id", id},
++                {"presetKind", preset_type},
++                {"presetName", preset_name},
++                {"relativePath", relative_path},
++                {"created", reloaded.second},
++                {"selected", selected},
++                {"values", values},
++                {"absentKeys", absent_keys},
++            });
++        } catch (const BridgeError& error) {
++            errors.push_back({{"id", id}, {"code", error.code}, {"message", error.what()}});
++        } catch (const std::exception& error) {
++            errors.push_back({{"id", id}, {"code", "PRESET_REFRESH_FAILED"}, {"message", error.what()}});
++        }
++    }
++
++    auto unload_missing_workspace_presets = [&](const std::string& preset_type) {
++        Tab& tab = require_preset_tab(preset_type);
++        PresetCollection& collection = *tab.get_presets();
++        const fs::path kind_root = (user_root / preset_type).lexically_normal().make_preferred();
++        struct MissingPreset {
++            std::string name;
++            std::string relative_path;
++            std::string replacement_name;
++            bool selected {false};
++        };
++        std::vector<MissingPreset> missing;
++        for (const Preset& preset : collection) {
++            if (!preset.is_user() || preset.is_system || preset.is_default ||
++                preset.is_project_embedded || preset.file.empty())
++                continue;
++            const fs::path source = fs::absolute(fs::path(preset.file))
++                                        .lexically_normal()
++                                        .make_preferred();
++            if (!path_is_within(source, kind_root) ||
++                normalized_path_for_compare(source.parent_path()) !=
++                    normalized_path_for_compare(kind_root))
++                continue;
++            fs::path info_path(source);
++            info_path.replace_extension(".info");
++            if (fs::exists(source) && fs::is_regular_file(source) &&
++                fs::exists(info_path) && fs::is_regular_file(info_path))
++                continue;
++            const bool selected = collection.get_selected_preset().name == preset.name;
++            missing.push_back({
++                preset.name,
++                preset_type + "/" + source.filename().string(),
++                selected ? preset.inherits() : collection.get_selected_preset().name,
++                selected,
++            });
++        }
++
++        for (const MissingPreset& preset : missing) {
++            const std::string error_id = "remove:" + preset.relative_path;
++            try {
++                if (!collection.unload_user_preset(preset.name, preset.replacement_name))
++                    throw BridgeError("PRESET_UNLOAD_FAILED", "The workspace preset was not loaded");
++                refreshed_types.insert(preset_type);
++                if (preset.selected)
++                    selected_removed_types.insert(preset_type);
++                removed.push_back({
++                    {"presetKind", preset_type},
++                    {"presetName", preset.name},
++                    {"relativePath", preset.relative_path},
++                    {"selected", preset.selected},
++                    {"replacementPreset", preset.selected ? json(preset.replacement_name) : json(nullptr)},
++                });
++            } catch (const BridgeError& error) {
++                errors.push_back({{"id", error_id}, {"code", error.code}, {"message", error.what()}});
++            } catch (const std::exception& error) {
++                errors.push_back({{"id", error_id}, {"code", "PRESET_UNLOAD_FAILED"}, {"message", error.what()}});
++            }
++        }
++    };
++    unload_missing_workspace_presets("process");
++    unload_missing_workspace_presets("filament");
++
++    if (!loaded.empty() || !removed.empty()) {
++        bundle.update_compatible(PresetSelectCompatibleType::Never);
++        for (const std::string& preset_type : refreshed_types) {
++            Tab& tab = require_preset_tab(preset_type);
++            const bool selected_reloaded = std::any_of(
++                loaded.begin(), loaded.end(), [&](const json& item) {
++                    return item["presetKind"] == preset_type && item["selected"] == true;
++                }) || selected_removed_types.find(preset_type) != selected_removed_types.end();
++            if (selected_reloaded)
++                tab.load_current_preset();
++            tab.update_tab_ui(true);
++        }
++        clear_rollback();
++        advance_revision();
++    }
++
++    return {
++        {"authority", "orca"},
++        {"status", "synchronized"},
++        {"targets", loaded},
++        {"removed", removed},
++        {"errors", errors},
++    };
+ }
+ 
+ json PresetAssistantBridge::proposal_apply(const json& params)
+diff --git a/tests/libslic3r/test_preset_bundle_loading.cpp b/tests/libslic3r/test_preset_bundle_loading.cpp
+index 11588c51..aae676f1 100644
+--- a/tests/libslic3r/test_preset_bundle_loading.cpp
++++ b/tests/libslic3r/test_preset_bundle_loading.cpp
+@@ -37,6 +37,14 @@ void write_print_preset(const DynamicPrintConfig &default_config, const fs::path
+     config.save_to_json(file.string(), name, "User", "1.0.0");
+ }
+ 
++void write_preset_info(const fs::path &json_file)
++{
++    fs::path info_file(json_file);
++    info_file.replace_extension(".info");
++    boost::filesystem::ofstream output(info_file);
++    output << "sync_info = \nsetting_id = \nbase_id = \nupdated_time = 0\n";
++}
++
+ // Write a preset json carrying a name and an "inherits" value, using the given collection's
+ // default config so it loads back into that collection. Works for any preset type.
+ void write_preset_with_inherits(const DynamicPrintConfig &default_config, const fs::path &file,
+@@ -146,6 +154,128 @@ TEST_CASE("Workspace root rejects relative and filesystem-root paths", "[Preset]
+     CHECK_THROWS_AS(bundle.configure_user_presets_root(config), Slic3r::RuntimeError);
+ }
+ 
++TEST_CASE("A user preset file can be added and replaced without restarting", "[Preset][Workspace][HotReload]")
++{
++    TempPresetDir temp_dir;
++    PresetBundle bundle;
++    const fs::path process_dir = temp_dir.path / PRESET_PRINT_NAME;
++    const fs::path json_file = process_dir / "Hot Reload.json";
++
++    DynamicPrintConfig first(bundle.prints.default_preset().config);
++    first.option<ConfigOptionFloat>("layer_height", true)->value = 0.20;
++    fs::create_directories(process_dir);
++    first.save_to_json(json_file.string(), "Hot Reload", "User", "1.0.0");
++    write_preset_info(json_file);
++
++    auto added = bundle.prints.reload_user_preset_from_file(
++        json_file.string(), "Hot Reload", ForwardCompatibilitySubstitutionRule::Disable);
++    REQUIRE(added.first != nullptr);
++    CHECK(added.second);
++    CHECK(added.first->config.option<ConfigOptionFloat>("layer_height")->value == Catch::Approx(0.20));
++
++    DynamicPrintConfig second(bundle.prints.default_preset().config);
++    second.option<ConfigOptionFloat>("layer_height", true)->value = 0.24;
++    second.save_to_json(json_file.string(), "Hot Reload", "User", "1.0.0");
++    auto updated = bundle.prints.reload_user_preset_from_file(
++        json_file.string(), "Hot Reload", ForwardCompatibilitySubstitutionRule::Disable);
++    REQUIRE(updated.first != nullptr);
++    CHECK_FALSE(updated.second);
++    CHECK(updated.first->config.option<ConfigOptionFloat>("layer_height")->value == Catch::Approx(0.24));
++}
++
++TEST_CASE("Hot reload preserves unsaved Orca edits and malformed source files", "[Preset][Workspace][HotReload]")
++{
++    TempPresetDir temp_dir;
++    PresetBundle bundle;
++    const fs::path process_dir = temp_dir.path / PRESET_PRINT_NAME;
++    const fs::path json_file = process_dir / "Protected Reload.json";
++    write_print_preset(bundle.prints.default_preset().config, json_file, "Protected Reload");
++    write_preset_info(json_file);
++    REQUIRE(bundle.prints.reload_user_preset_from_file(
++        json_file.string(), "Protected Reload", ForwardCompatibilitySubstitutionRule::Disable).first != nullptr);
++    REQUIRE(bundle.prints.select_preset_by_name("Protected Reload", true));
++    bundle.prints.get_edited_preset().config.option<ConfigOptionFloat>("layer_height", true)->value = 0.28;
++    REQUIRE(bundle.prints.current_is_dirty());
++
++    CHECK_THROWS(bundle.prints.reload_user_preset_from_file(
++        json_file.string(), "Protected Reload", ForwardCompatibilitySubstitutionRule::Disable));
++    CHECK(bundle.prints.get_edited_preset().config.option<ConfigOptionFloat>("layer_height")->value == Catch::Approx(0.28));
++
++    REQUIRE(bundle.prints.select_preset_by_name(bundle.prints.default_preset().name, true));
++    {
++        boost::filesystem::ofstream output(json_file);
++        output << "{ not valid json";
++    }
++    CHECK_THROWS(bundle.prints.reload_user_preset_from_file(
++        json_file.string(), "Protected Reload", ForwardCompatibilitySubstitutionRule::Disable));
++    CHECK(fs::exists(json_file));
++    fs::path info_file(json_file);
++    info_file.replace_extension(".info");
++    CHECK(fs::exists(info_file));
++    CHECK(bundle.prints.find_preset("Protected Reload") != nullptr);
++}
++
++TEST_CASE("Workspace user presets can be unloaded without restarting or deleting files", "[Preset][Workspace][HotReload]")
++{
++    TempPresetDir temp_dir;
++    PresetBundle bundle;
++    const fs::path process_dir = temp_dir.path / PRESET_PRINT_NAME;
++    const fs::path json_file = process_dir / "Hot Unload.json";
++    write_print_preset(bundle.prints.default_preset().config, json_file, "Hot Unload");
++    write_preset_info(json_file);
++
++    REQUIRE(bundle.prints.reload_user_preset_from_file(
++        json_file.string(), "Hot Unload", ForwardCompatibilitySubstitutionRule::Disable).first != nullptr);
++    const std::string selected_before = bundle.prints.get_selected_preset().name;
++    REQUIRE(bundle.prints.unload_user_preset("Hot Unload"));
++    CHECK(bundle.prints.find_preset("Hot Unload") == nullptr);
++    CHECK(bundle.prints.get_selected_preset().name == selected_before);
++    CHECK(fs::exists(json_file));
++    fs::path info_file(json_file);
++    info_file.replace_extension(".info");
++    CHECK(fs::exists(info_file));
++
++    REQUIRE(bundle.prints.reload_user_preset_from_file(
++        json_file.string(), "Hot Unload", ForwardCompatibilitySubstitutionRule::Disable).first != nullptr);
++    const fs::path replacement_file = process_dir / "Hot Unload Replacement.json";
++    write_print_preset(bundle.prints.default_preset().config, replacement_file, "Hot Unload Replacement");
++    write_preset_info(replacement_file);
++    REQUIRE(bundle.prints.reload_user_preset_from_file(
++        replacement_file.string(), "Hot Unload Replacement", ForwardCompatibilitySubstitutionRule::Disable).first != nullptr);
++    REQUIRE(bundle.prints.select_preset_by_name("Hot Unload", true));
++    REQUIRE(bundle.prints.unload_user_preset("Hot Unload", "Hot Unload Replacement"));
++    CHECK(bundle.prints.find_preset("Hot Unload") == nullptr);
++    CHECK(bundle.prints.get_selected_preset().name == "Hot Unload Replacement");
++}
++
++TEST_CASE("Hot unload protects dirty and inherited user presets", "[Preset][Workspace][HotReload]")
++{
++    TempPresetDir temp_dir;
++    PresetBundle bundle;
++    const fs::path process_dir = temp_dir.path / PRESET_PRINT_NAME;
++    const fs::path base_file = process_dir / "Unload Base.json";
++    const fs::path child_file = process_dir / "Unload Child.json";
++    write_print_preset(bundle.prints.default_preset().config, base_file, "Unload Base");
++    write_preset_info(base_file);
++    write_print_preset(bundle.prints.default_preset().config, child_file, "Unload Child", "Unload Base");
++    write_preset_info(child_file);
++
++    REQUIRE(bundle.prints.reload_user_preset_from_file(
++        base_file.string(), "Unload Base", ForwardCompatibilitySubstitutionRule::Disable).first != nullptr);
++    REQUIRE(bundle.prints.reload_user_preset_from_file(
++        child_file.string(), "Unload Child", ForwardCompatibilitySubstitutionRule::Disable).first != nullptr);
++    CHECK_THROWS(bundle.prints.unload_user_preset("Unload Base"));
++    CHECK(bundle.prints.find_preset("Unload Base") != nullptr);
++
++    REQUIRE(bundle.prints.select_preset_by_name("Unload Child", true));
++    bundle.prints.get_edited_preset().config.option<ConfigOptionFloat>("layer_height", true)->value = 0.28;
++    REQUIRE(bundle.prints.current_is_dirty());
++    CHECK_THROWS(bundle.prints.unload_user_preset(
++        "Unload Child", bundle.prints.default_preset().name));
++    CHECK(bundle.prints.find_preset("Unload Child") != nullptr);
++    CHECK(bundle.prints.get_selected_preset().name == "Unload Child");
++}
++
+ TEST_CASE("Preset identity is canonicalized from load path", "[Preset][Identity]")
+ {
+     TempPresetDir              temp_dir;

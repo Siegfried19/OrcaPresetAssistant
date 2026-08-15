@@ -92,9 +92,8 @@ index 2150bec4d..80c05b98c 100644
  
      start_helper();
      reload();
-@@ -323,7 +323,14 @@ void PresetAssistantPanel::start_helper()
+@@ -319,6 +319,13 @@ void PresetAssistantPanel::start_helper()
      m_helper_pid = pid;
-     m_helper_process = std::move(process);
      m_helper_ready_attempts = 0;
 -    m_helper_ready_timer.Start(100);
 +    if (!m_helper_ready_timer.Start(100)) {
@@ -108,7 +107,7 @@ index 2150bec4d..80c05b98c 100644
  #endif
  }
  
-@@ -358,6 +365,9 @@ void PresetAssistantPanel::stop_helper()
+@@ -354,6 +361,9 @@ void PresetAssistantPanel::stop_helper()
  
  void PresetAssistantPanel::on_helper_ready_timer(wxTimerEvent& event)
  {
@@ -118,7 +117,7 @@ index 2150bec4d..80c05b98c 100644
      event.Skip();
      if (m_helper_pid <= 0 || m_helper_state_path.empty()) {
          m_helper_ready_timer.Stop();
-@@ -379,6 +389,7 @@ void PresetAssistantPanel::on_helper_ready_timer(wxTimerEvent& event)
+@@ -375,6 +385,7 @@ void PresetAssistantPanel::on_helper_ready_timer(wxTimerEvent& event)
          return;
      std::ostringstream buffer;
      buffer << stream.rdbuf();

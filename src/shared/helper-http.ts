@@ -8,6 +8,7 @@ import type {
   OrcaEffectiveSettingsSnapshot,
   OrcaWriteCapabilities,
   ParameterSnapshot,
+  PresetFileChangeView,
   PresetDiff,
   PresetVersionView,
   QueueChangeProposalRequest,
@@ -55,6 +56,7 @@ export const HELPER_HTTP_ROUTES = {
   publishNativeState: '/internal/v1/native-state/publish',
   prepareProjectExport: '/internal/v1/print-history/prepare-project-export',
   completeChangeProposal: '/internal/v1/change-proposals/complete',
+  completePresetFileChange: '/internal/v1/preset-file-changes/complete',
   recordOrcaPrint: '/internal/v1/print-history/orca',
 } as const
 
@@ -73,6 +75,20 @@ export interface AuthoritativeChangeReceipt {
 export interface CompleteChangeProposalRequest {
   readonly id: string
   readonly receipt: AuthoritativeChangeReceipt
+}
+
+export interface CompletePresetFileChangeRequest {
+  readonly id: string
+  readonly receipt: {
+    readonly authority: 'orca'
+    readonly status: 'loaded'
+    readonly revision: string
+    readonly presetKind: 'process' | 'filament'
+    readonly presetName: string
+    readonly relativePath: string
+    readonly values: ParameterSnapshot
+    readonly absentKeys: readonly string[]
+  }
 }
 
 export interface OrcaPrintArchiveRequest {
@@ -145,6 +161,7 @@ export interface HelperHttpRequestMap {
     readonly explicitConsent?: boolean
   }
   readonly completeChangeProposal: CompleteChangeProposalRequest
+  readonly completePresetFileChange: CompletePresetFileChangeRequest
   readonly recordOrcaPrint: OrcaPrintArchiveRequest
 }
 
@@ -176,6 +193,7 @@ export interface HelperHttpResponseMap {
   readonly publishNativeState: PublishedNativeState
   readonly prepareProjectExport: PrepareProjectExportResult
   readonly completeChangeProposal: ChangeProposalView
+  readonly completePresetFileChange: PresetFileChangeView
   readonly recordOrcaPrint: DashboardSnapshot
 }
 

@@ -1,7 +1,7 @@
 diff --git a/src/slic3r/GUI/PresetAssistantPanel.hpp b/src/slic3r/GUI/PresetAssistantPanel.hpp
 --- a/src/slic3r/GUI/PresetAssistantPanel.hpp
 +++ b/src/slic3r/GUI/PresetAssistantPanel.hpp
-@@ -3,11 +3,14 @@
+@@ -3,11 +3,13 @@
  
  #include <wx/panel.h>
  #include <wx/string.h>
@@ -12,11 +12,10 @@ diff --git a/src/slic3r/GUI/PresetAssistantPanel.hpp b/src/slic3r/GUI/PresetAssi
  #include <string>
  
  class wxCommandEvent;
-+class wxProcess;
 +class wxTimerEvent;
  
  namespace Slic3r { namespace GUI {
-@@ -22,6 +25,9 @@
+@@ -22,6 +24,9 @@
  class PresetAssistantPanel final : public wxPanel
  {
  public:
@@ -26,7 +25,7 @@ diff --git a/src/slic3r/GUI/PresetAssistantPanel.hpp b/src/slic3r/GUI/PresetAssi
 +        wxString url,
 +        const wxString& language);
  
-@@ -42,6 +49,11 @@ private:
+@@ -42,6 +48,11 @@ private:
      void     on_navigating(wxWebViewEvent& event);
      void     on_script_message(wxWebViewEvent& event);
      void     on_webview_recreated(wxCommandEvent& event);
@@ -38,18 +37,17 @@ diff --git a/src/slic3r/GUI/PresetAssistantPanel.hpp b/src/slic3r/GUI/PresetAssi
  
      wxWebView* m_browser{nullptr};
      wxString   m_page_url;
-@@ -52,6 +60,14 @@ private:
+@@ -52,6 +59,13 @@ private:
  
      std::string                            m_bridge_token;
      std::unique_ptr<PresetAssistantBridge> m_bridge;
 +
-+    std::unique_ptr<wxProcess> m_helper_process;
-+    wxTimer                    m_helper_ready_timer;
-+    long                       m_helper_pid{0};
-+    int                        m_helper_ready_attempts{0};
-+    wxString                   m_helper_state_path;
-+    wxString                   m_helper_page_url;
-+    std::string                m_helper_session_token;
++    wxTimer     m_helper_ready_timer;
++    long        m_helper_pid{0};
++    int         m_helper_ready_attempts{0};
++    wxString    m_helper_state_path;
++    wxString    m_helper_page_url;
++    std::string m_helper_session_token;
  };
  
  }} // namespace Slic3r::GUI
@@ -152,7 +150,7 @@ diff --git a/src/slic3r/GUI/PresetAssistantPanel.cpp b/src/slic3r/GUI/PresetAssi
      if (wxGetApp().app_config) {
          std::string configured = boost::algorithm::trim_copy(
              wxGetApp().app_config->get(CONFIG_SECTION, CONFIG_URL_KEY));
-@@ -203,6 +233,207 @@ wxString PresetAssistantPanel::resolve_page_url()
+@@ -203,6 +233,203 @@ wxString PresetAssistantPanel::resolve_page_url()
      return with_runtime_query(wxString("file://") + from_u8(entry.string()));
  }
  
@@ -228,11 +226,9 @@ diff --git a/src/slic3r/GUI/PresetAssistantPanel.cpp b/src/slic3r/GUI/PresetAssi
 +        arguments.push_back(argument.wc_str());
 +    arguments.push_back(nullptr);
 +
-+    auto process = std::make_unique<wxProcess>();
 +    const long pid = wxExecute(
 +        arguments.data(),
-+        wxEXEC_ASYNC | wxEXEC_HIDE_CONSOLE,
-+        process.get());
++        wxEXEC_ASYNC | wxEXEC_HIDE_CONSOLE);
 +    if (pid <= 0) {
 +        BOOST_LOG_TRIVIAL(error)
 +            << "PresetAssistantPanel: failed to launch packaged headless helper";
@@ -242,7 +238,6 @@ diff --git a/src/slic3r/GUI/PresetAssistantPanel.cpp b/src/slic3r/GUI/PresetAssi
 +    }
 +
 +    m_helper_pid = pid;
-+    m_helper_process = std::move(process);
 +    m_helper_ready_attempts = 0;
 +    m_helper_ready_timer.Start(100);
 +#endif
@@ -264,7 +259,6 @@ diff --git a/src/slic3r/GUI/PresetAssistantPanel.cpp b/src/slic3r/GUI/PresetAssi
 +                << "PresetAssistantPanel: helper did not acknowledge shutdown";
 +    }
 +#endif
-+    m_helper_process.reset();
 +    m_helper_pid = 0;
 +
 +    if (!m_helper_state_path.empty()) {

@@ -70,9 +70,9 @@
 - 原生向所有受信页面注入完整 `window.OrcaPresetAssistant` 适配器，不依赖 Electron preload。
 - `state.get` 只返回常驻安全状态；完整有效参数、项目摆放和打印待建档分别使用独立授权。
 - `project.get` 的 `project:geometry` 会话授权返回零件摆放，并仅列出当前项目实际引用且存在的 STL/3MF 源文件；Codex 插件据此生成几何统计与三视图。`project:placement` 兼容入口仍不返回源路径。
-- `workspace.set` 持久化工作区并明确返回需要重启；`presets.refresh` 在没有安全重载事务前返回 `RESTART_REQUIRED`，不会显示假刷新成功。
+- `workspace.set` 持久化工作区并明确返回需要重启；`presets.refresh` 由后续 `0015` 补丁升级为只重载已记录的 process / filament 用户预设，并返回逐目标原生回读结果。
 - `proposal.apply` 要求 `approvedAt`、`expectedPresetName` 和明确 destination；Orca 返回 `authority: "orca"`、状态、revision、before/after。
-- 三种 destination 已对安全白名单中的工艺参数形成闭环：仅当前项目、更新当前用户永久预设、另存为新用户永久预设。
+- 原生桥仍兼容早期三个 destination，但当前产品只从 Codex/面板使用 `current-project`。永久用户预设统一走“记录文件修改 → Codex 直写 → `presets.refresh` 定向热加载”。
 - 回滚有 revision guard。另存新永久预设的回滚只切回原预设，不删除已经创建的新预设。
 - 成功提交打印后通过 `CallAfter` 在 UI 线程发出 pending 建档事件；真正持久化由工作区 helper 完成。
 - `project.export-copy` 只允许把当前项目副本静默导出到 helper 已准备的 `<workspace>\PrintHistory` 子路径，不改变当前项目路径。
@@ -103,7 +103,7 @@ helper 的打包契约是：`--serve` 绝不能创建 `BrowserWindow`，只能�
 - 每项写入都依次校验参数白名单、Orca `ConfigOptionType`、单标量语法、数值范围；风扇最小值不得高于最大值。
 - `state.get` 与 `settings.get` 返回同一份 `writeCapabilities`，正式面板可直接据此显示可写/只读状态。
 - machine 明确为只读；诊断 fallback 也直接显示这一边界。
-- 三种 destination 和原有 rollback guard 对 process、filament 共用同一事务路径。
+- 早期三个 destination 的原生兼容代码和 rollback guard 仍保留；当前产品的永久 process / filament 修改由 `0015` 热刷新路径接管。
 
 完整参数与边界见 [WRITE_WHITELIST.md](WRITE_WHITELIST.md)。这不是“全参数编辑器”，枚举、脚本、路径、设备连接和 machine 运动安全参数都不在写入面内。
 
@@ -184,6 +184,18 @@ Prepare 参数区域不再插入“当前预设已更新 / 查看修改 / 撤销
 - 发布 `verification: orca-readback`，客户端只在原生回执和新 revision 数值匹配后显示成功；
 - Codex 插件直接消费这份能力声明，不再维护重复白名单。
 
+## 第十五批用户预设定向热刷新
+
+[0015-hot-reload-workspace-user-presets.patch](patches/0015-hot-reload-workspace-user-presets.patch)
+把面板的同一个“刷新”动作接到新增和修改用户预设：
+
+- 只接受 helper 已记录并验证落盘的 process / filament 目标；每个目标必须精确匹配 `<UserPresets>/<kind>/<name>.json`。
+- 强制验证 JSON、同名 `.info`、文件名、内部 `name` 和 settings ID，不扫描或重载未在请求中的其他文件。
+- 在临时副本上解析目标文件；格式错误不会删除原文件，也不会替换 Orca 内存中的旧预设。
+- 新预设加入内存列表，已有预设按名称替换；未选中的目标不会改变当前选择。
+- 如果目标就是当前所选预设且 Orca 内有未保存编辑，则只拒绝该目标，不覆盖临时编辑；其他目标仍可继续加载。
+- 返回逐目标原生回读值、缺省（继续继承）字段和新 revision，面板只有拿到这份回执才显示“Orca 已加载”。
+
 ## URL 配置
 
 默认页面：
@@ -235,6 +247,7 @@ git apply --check "$patchRoot\0010-enable-current-project-geometry-access.patch"
 git apply --check "$patchRoot\0011-explain-bambu-lan-developer-mode.patch"
 git apply --check "$patchRoot\0013-expand-write-whitelist-and-broadcast-scalars.patch"
 git apply --check "$patchRoot\0014-publish-parameter-visibility-and-verification.patch"
+git apply --check "$patchRoot\0015-hot-reload-workspace-user-presets.patch"
 ```
 
 不能在未应用前一批的原始源树上单独检查后续补丁。产品仓库验证使用临时导出的 Orca 基线依次应用前置补丁，不改动用户日常 Orca 安装。
@@ -267,6 +280,7 @@ git apply "$patchRoot\0010-enable-current-project-geometry-access.patch"
 git apply "$patchRoot\0011-explain-bambu-lan-developer-mode.patch"
 git apply "$patchRoot\0013-expand-write-whitelist-and-broadcast-scalars.patch"
 git apply "$patchRoot\0014-publish-parameter-visibility-and-verification.patch"
+git apply "$patchRoot\0015-hot-reload-workspace-user-presets.patch"
 ```
 
 应用后先核对范围：
@@ -340,5 +354,5 @@ git apply -R "$patchRoot\0002-use-workspace-user-presets-root.patch"
 - 静态 bootstrap 只是诊断 fallback；正式 React 页面来自无窗口 helper。
 - 三种 destination 对白名单中的 process 与 filament 标量已接通；machine 有意保持只读。
 - 白名单不含枚举、脚本、路径、设备连接、挤出机/运动系统或任意 JSON 键；新增参数必须逐项建规则与测试。
-- 安全热刷新尚未实现，`presets.refresh` 明确返回需要重启。
+- `presets.refresh` 只处理已记录的 process / filament 用户预设目标；machine、官方预设、路径不匹配和当前未保存冲突均失败关闭。
 - helper server、完整 `win-unpacked` runtime 和 Orca 原生补丁必须一起打包并完成构建/运行验收，才能称最终产品。

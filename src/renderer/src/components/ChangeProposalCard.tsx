@@ -22,11 +22,7 @@ interface ChangeProposalCardProps {
   readonly onRollback: (id: string) => Promise<void>
 }
 
-const DESTINATIONS: readonly ChangeDestination[] = [
-  'current-project',
-  'update-current-preset',
-  'save-as-new-preset',
-]
+const DESTINATIONS: readonly ChangeDestination[] = ['current-project']
 
 function valueText(value: unknown): string {
   return value === null ? 'null' : typeof value === 'string' ? value : JSON.stringify(value)
@@ -41,10 +37,7 @@ export function ChangeProposalCard({
   onRollback,
 }: ChangeProposalCardProps): React.JSX.Element {
   const { t } = useI18n()
-  const [destination, setDestination] = useState<ChangeDestination>(
-    proposal?.destination ?? 'current-project',
-  )
-  const [newPresetName, setNewPresetName] = useState(proposal?.newPresetName ?? '')
+  const [destination, setDestination] = useState<ChangeDestination>('current-project')
   const [pendingAction, setPendingAction] = useState<'approve' | 'reject' | 'rollback' | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
 
@@ -73,17 +66,12 @@ export function ChangeProposalCard({
   const visibleChange = displayChange ?? { before: proposal.before, after: proposal.after }
 
   const approve = async (): Promise<void> => {
-    if (destination === 'save-as-new-preset' && !newPresetName.trim()) {
-      setFormError(t('proposal.nameRequired'))
-      return
-    }
     setPendingAction('approve')
     setFormError(null)
     try {
       await onApprove({
         id: proposal.id,
         destination,
-        ...(destination === 'save-as-new-preset' ? { newPresetName: newPresetName.trim() } : {}),
       })
     } catch {
       setFormError(t('proposal.approveFailed'))
@@ -203,18 +191,6 @@ export function ChangeProposalCard({
                 </label>
               ))}
             </fieldset>
-            {destination === 'save-as-new-preset' && (
-              <label className="proposal-name-field">
-                <span>{t('proposal.newName')}</span>
-                <input
-                  disabled={pendingAction !== null}
-                  maxLength={160}
-                  onChange={(event) => setNewPresetName(event.target.value)}
-                  placeholder={t('proposal.newNamePlaceholder')}
-                  value={newPresetName}
-                />
-              </label>
-            )}
             {formError && <div className="form-error proposal-form-error">{formError}</div>}
             <div className="proposal-actions">
               <button

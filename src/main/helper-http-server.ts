@@ -20,6 +20,7 @@ const INTERNAL_ROUTES = new Set<string>([
   HELPER_HTTP_ROUTES.publishNativeState,
   HELPER_HTTP_ROUTES.prepareProjectExport,
   HELPER_HTTP_ROUTES.completeChangeProposal,
+  HELPER_HTTP_ROUTES.completePresetFileChange,
   HELPER_HTTP_ROUTES.recordOrcaPrint,
 ])
 
@@ -277,6 +278,8 @@ async function invokeRoute(
     }
     case HELPER_HTTP_ROUTES.completeChangeProposal:
       return service.completeChangeProposal(objectBody(body, ['id', 'receipt']) as never)
+    case HELPER_HTTP_ROUTES.completePresetFileChange:
+      return service.completePresetFileChange(objectBody(body, ['id', 'receipt']) as never)
     case HELPER_HTTP_ROUTES.recordOrcaPrint:
       return service.recordOrcaPrint(
         objectBody(body, ['archiveId', 'project3mfPath', 'effectiveSettings']) as never,

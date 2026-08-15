@@ -6,6 +6,7 @@ import {
   accessStatus,
   listPresets,
   listPrintHistory,
+  logUserPresetFileChange,
   queuePresetChange,
   readLiveState,
 } from './state.mjs'
@@ -21,7 +22,8 @@ const tools = [
   },
   {
     name: 'list_user_presets',
-    description: 'List workspace user presets. Requires current-settings permission.',
+    description:
+      'List user-preset JSON files in the selected workspace without reading live Orca settings.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -59,19 +61,41 @@ const tools = [
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
+    name: 'log_user_preset_file_change',
+    description:
+      'Log an intended direct process or filament user-preset file change before Codex edits the JSON. This does not read live Orca settings, edit the file, or require Orca to be open.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        operation: { type: 'string', enum: ['create', 'update'] },
+        presetKind: { type: 'string', enum: ['process', 'filament'] },
+        presetName: { type: 'string', minLength: 1, maxLength: 256 },
+        sourcePresetName: { type: 'string', minLength: 1, maxLength: 256 },
+        changes: { type: 'object', additionalProperties: true, minProperties: 1 },
+        remove: {
+          type: 'array',
+          items: { type: 'string', pattern: '^[A-Za-z0-9_]+$' },
+          uniqueItems: true,
+        },
+        reason: { type: 'string', minLength: 1, maxLength: 2000 },
+      },
+      required: ['operation', 'presetKind', 'presetName', 'changes', 'reason'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'queue_preset_change',
     description:
-      'Queue a controlled process or filament parameter proposal for panel approval. Machine presets are read-only; this never applies a change itself.',
+      'Queue a controlled process or filament change for the currently open project only. Use log_user_preset_file_change for permanent user-preset changes.',
     inputSchema: {
       type: 'object',
       properties: {
         destination: {
           type: 'string',
-          enum: ['current-project', 'update-current-preset', 'save-as-new-preset'],
+          enum: ['current-project'],
         },
         presetKind: { type: 'string', enum: ['process', 'filament'] },
         presetId: { type: 'string', minLength: 1 },
-        newPresetName: { type: 'string' },
         before: { type: 'object', additionalProperties: true, minProperties: 1 },
         after: { type: 'object', additionalProperties: true, minProperties: 1 },
         reason: { type: 'string', minLength: 1, maxLength: 2000 },
@@ -207,6 +231,7 @@ function callTool(name, input = {}) {
     }
   }
   if (name === 'list_print_history') return { records: listPrintHistory() }
+  if (name === 'log_user_preset_file_change') return logUserPresetFileChange(input)
   if (name === 'queue_preset_change') return queuePresetChange(input)
   throw new Error(`Unknown tool: ${name}`)
 }

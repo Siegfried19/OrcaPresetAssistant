@@ -49,6 +49,36 @@ export function Inspector({
   onRollbackProposal,
 }: InspectorProps): React.JSX.Element {
   const { language, t } = useI18n()
+  if (!preset && proposal) {
+    return (
+      <aside className="inspector">
+        <div className="inspector-header">
+          <button
+            aria-label={t('action.close')}
+            className="inspector-close"
+            onClick={onClose}
+            type="button"
+          >
+            <X aria-hidden="true" size={17} />
+          </button>
+          <span className="eyebrow">{t('proposal.title')}</span>
+          <h2>{proposalTargetName ?? proposal.presetId}</h2>
+          <p>{proposal.presetId}</p>
+        </div>
+        <div className="inspector-scroll">
+          <ChangeProposalCard
+            key={proposal.id}
+            onApprove={onApproveProposal}
+            onReject={onRejectProposal}
+            onRollback={onRollbackProposal}
+            proposal={proposal}
+            targetName={proposalTargetName}
+            writeCapabilities={writeCapabilities}
+          />
+        </div>
+      </aside>
+    )
+  }
   if (!preset) {
     return (
       <aside className="inspector inspector-empty">

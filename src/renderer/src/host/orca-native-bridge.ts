@@ -7,6 +7,7 @@ import type {
   OrcaWriteSettingCapability,
   ParameterSnapshot,
   ParameterValue,
+  PresetFileChangeView,
 } from '@shared/contracts'
 import type { HelperJsonValue } from '@shared/helper-http'
 
@@ -100,11 +101,36 @@ export interface OrcaWorkspaceResult {
   readonly restartRequired: boolean
 }
 
+export interface OrcaPresetRefreshTargetResult {
+  readonly id: string
+  readonly presetKind: 'process' | 'filament'
+  readonly presetName: string
+  readonly relativePath: string
+  readonly created: boolean
+  readonly selected: boolean
+  readonly values: ParameterSnapshot
+  readonly absentKeys: readonly string[]
+}
+
+export interface OrcaPresetRefreshResult {
+  readonly authority: 'orca'
+  readonly status: 'synchronized'
+  readonly targets: readonly OrcaPresetRefreshTargetResult[]
+  readonly removed: readonly {
+    readonly presetKind: 'process' | 'filament'
+    readonly presetName: string
+    readonly relativePath: string
+    readonly selected: boolean
+    readonly replacementPreset: string | null
+  }[]
+}
+
 const initializedBridges = new WeakMap<object, OrcaNativeBridge>()
 const MUTATION_METHODS = new Set([
   'workspace.set',
   'workspace.choose',
   'project.export-copy',
+  'presets.refresh',
   'proposal.apply',
   'proposal.rollback',
 ])
@@ -440,6 +466,67 @@ function isProjectExportResult(value: unknown): value is OrcaProjectExportResult
     typeof value.path === 'string' &&
     Boolean(value.path) &&
     value.currentProjectPathChanged === false
+  )
+}
+
+function isPresetRefreshResult(value: unknown): value is OrcaPresetRefreshResult {
+  const isRawValues = (candidate: unknown): candidate is ParameterSnapshot =>
+    isRecord(candidate) &&
+    Object.entries(candidate).every(
+      ([key, item]) => /^[A-Za-z0-9_]+$/u.test(key) && isParameterValue(item),
+    )
+  return (
+    isRecord(value) &&
+    value.authority === 'orca' &&
+    value.status === 'synchronized' &&
+    Array.isArray(value.targets) &&
+    value.targets.every(
+      (target) =>
+        isRecord(target) &&
+        typeof target.id === 'string' &&
+        Boolean(target.id) &&
+        (target.presetKind === 'process' || target.presetKind === 'filament') &&
+        typeof target.presetName === 'string' &&
+        Boolean(target.presetName) &&
+        typeof target.relativePath === 'string' &&
+        Boolean(target.relativePath) &&
+        typeof target.created === 'boolean' &&
+        typeof target.selected === 'boolean' &&
+        isRawValues(target.values) &&
+        Array.isArray(target.absentKeys) &&
+        target.absentKeys.every((key) => typeof key === 'string' && /^[A-Za-z0-9_]+$/u.test(key)),
+    ) &&
+    Array.isArray(value.removed) &&
+    value.removed.every(
+      (target) =>
+        isRecord(target) &&
+        (target.presetKind === 'process' || target.presetKind === 'filament') &&
+        typeof target.presetName === 'string' &&
+        Boolean(target.presetName) &&
+        typeof target.relativePath === 'string' &&
+        Boolean(target.relativePath) &&
+        typeof target.selected === 'boolean' &&
+        (target.replacementPreset === null || typeof target.replacementPreset === 'string'),
+    )
+  )
+}
+
+export async function refreshOrcaUserPresets(
+  bridge: OrcaNativeBridge,
+  changes: readonly PresetFileChangeView[],
+): Promise<OrcaNativeEnvelope<OrcaPresetRefreshResult>> {
+  return parseNativeEnvelope(
+    await bridge.request('presets.refresh', {
+      targets: changes.map((change) => ({
+        id: change.id,
+        presetKind: change.presetKind,
+        presetName: change.presetName,
+        relativePath: change.relativePath,
+        keys: Object.keys(change.after),
+        removedKeys: change.removedKeys,
+      })),
+    }),
+    isPresetRefreshResult,
   )
 }
 

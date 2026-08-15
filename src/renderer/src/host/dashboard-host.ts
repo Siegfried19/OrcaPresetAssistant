@@ -26,6 +26,7 @@ import {
   readOrcaSettings,
   readOrcaState,
   readOrcaWorkspace,
+  refreshOrcaUserPresets,
   resolveOrcaNativeBridge,
   rollbackOrcaProposal,
   setOrcaWorkspace,
@@ -383,7 +384,54 @@ class OrcaDashboardApi implements DashboardApi {
   }
 
   public async refresh(): Promise<DashboardSnapshot> {
-    return this.track(await this.helper.refresh())
+    let snapshot = await this.track(await this.helper.refresh())
+    const writtenChanges = snapshot.presetFileChanges.filter(
+      (change) => change.status === 'written',
+    )
+    if (snapshot.warnings.includes('workspace-mismatch')) {
+      return snapshot
+    }
+
+    try {
+      const refreshed = await refreshOrcaUserPresets(this.bridge, writtenChanges)
+      const expectedIds = new Set(writtenChanges.map((change) => change.id))
+      const returnedIds = new Set<string>()
+      if (
+        refreshed.data.targets.some((target) => {
+          if (!expectedIds.has(target.id) || returnedIds.has(target.id)) return true
+          returnedIds.add(target.id)
+          return false
+        })
+      ) {
+        throw new Error('invalid-orca-native-response')
+      }
+      await Promise.all(
+        refreshed.data.targets.map((target) =>
+          this.client.request(
+            'completePresetFileChange',
+            {
+              id: target.id,
+              receipt: {
+                authority: 'orca',
+                status: 'loaded',
+                revision: String(refreshed.revision),
+                presetKind: target.presetKind,
+                presetName: target.presetName,
+                relativePath: target.relativePath,
+                values: target.values,
+                absentKeys: target.absentKeys,
+              },
+            },
+            { nativeBridge: true },
+          ),
+        ),
+      )
+      snapshot = await this.track(await this.helper.refresh())
+    } catch {
+      // The disk write remains authoritative and visible. A later refresh can retry
+      // once Orca is ready or the selected preset no longer has unsaved edits.
+    }
+    return snapshot
   }
 
   public async chooseRoot(

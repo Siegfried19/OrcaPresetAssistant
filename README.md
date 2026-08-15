@@ -8,7 +8,7 @@
 
 Orca Preset Assistant 是嵌入 OrcaSlicer 主窗口的用户预设与打印历史工作台。日常使用只需要 Orca 和 Codex 两个窗口：Orca 继续负责模型、切片、设备和打印，助手面板负责预设审阅、受控写入与打印结果归档。
 
-> 当前状态：Windows 早期预览版。核心流程和自动化测试已经建立，真实打印、不同显示缩放和 Orca 升级兼容仍需持续验证。[v0.6.3 Release](https://github.com/Siegfried19/OrcaPresetAssistant/releases/tag/v0.6.3) 同时提供完整定制 Orca、独立便携面板和 Codex 插件。
+> 当前状态：Windows 早期预览版。核心流程和自动化测试已经建立，真实打印、不同显示缩放和 Orca 升级兼容仍需持续验证。[v0.6.4 Release](https://github.com/Siegfried19/OrcaPresetAssistant/releases/tag/v0.6.4) 同时提供完整定制 Orca、独立便携面板和 Codex 插件。
 
 ![Orca Preset Assistant 中文界面](./docs/images/dashboard-zh.png)
 
@@ -16,7 +16,7 @@ Orca Preset Assistant 是嵌入 OrcaSlicer 主窗口的用户预设与打印历�
 
 面板只有两个一级页面：
 
-- **用户自定义预设**：查看 machine、process、filament 用户预设，审阅 Codex 参数提案，并明确选择写入位置。
+- **用户自定义预设**：查看 machine、process、filament 用户预设；Codex 文件修改日志只在后台用于同步和验证，不占用切片面板。
 - **打印历史**：自动或手动保存打印档案，记录实际有效参数，并在打印后补写结果和备注。
 
 首次使用时选择一个普通父文件夹，不要直接选择 `UserPresets`。程序会自动创建并只管理下面的结构；已有 `AGENTS.md` 不会被覆盖：
@@ -38,8 +38,9 @@ Orca Preset Assistant 是嵌入 OrcaSlicer 主窗口的用户预设与打印历�
 - 在 Orca 内查看当前工作区的三类用户预设。
 - 用“Orca 创建/管理”或“本地 JSON”标记预设来源；只有 JSON 的本地预设仍可正常使用。
 - 查看逐预设的本地变化；在 `UserPresets` 中启用独立本地版本、保存快照并安全恢复旧版本。
-- 让 Codex 按授权级别读取通用状态、当前设置，或当前项目的零件摆放和模型几何。
-- 审批参数变化并选择“仅当前项目 / 更新当前永久预设 / 另存为新永久预设”；面板区分可见和隐藏参数，并只在 Orca 原生回读后显示“已应用并验证”。
+- 更新或基于现有预设新建 process / filament 用户预设时，Codex 先记录差异再直接修改工作区文件；Orca 可以开着或关闭。
+- 刷新按钮重新索引新增、修改和删除的用户预设，并在不重启 Orca 的情况下定向热加载或热卸载；后台只在原生回读成功后记录已加载状态。
+- 只有用户明确要求时才让 Codex 读取当前设置或当前项目；“仅当前项目”修改仍使用 Orca 受控提案与原生回读。
 - 在没有后续冲突时回滚最近一次 Orca 写入。
 - 打印提交成功后自动建档，可选择是否保存当前项目 3MF 副本。
 - 打印完成后补写成功、问题、失败和备注。
@@ -49,11 +50,11 @@ Orca Preset Assistant 是嵌入 OrcaSlicer 主窗口的用户预设与打印历�
 
 ### 下载与使用
 
-- [下载完整定制 Orca Windows x64 压缩包](https://github.com/Siegfried19/OrcaPresetAssistant/releases/download/v0.6.3/OrcaPresetAssistant-Orca-0.6.3-Windows-x64.zip)
-- [下载 Windows x64 独立便携面板](https://github.com/Siegfried19/OrcaPresetAssistant/releases/download/v0.6.3/OrcaPresetAssistant-0.6.3-portable.exe)
-- [查看 v0.6.3 发布说明](https://github.com/Siegfried19/OrcaPresetAssistant/releases/tag/v0.6.3)
+- [下载完整定制 Orca Windows x64 压缩包](https://github.com/Siegfried19/OrcaPresetAssistant/releases/download/v0.6.4/OrcaPresetAssistant-Orca-0.6.4-Windows-x64.zip)
+- [下载 Windows x64 独立便携面板](https://github.com/Siegfried19/OrcaPresetAssistant/releases/download/v0.6.4/OrcaPresetAssistant-0.6.4-portable.exe)
+- [查看 v0.6.4 发布说明](https://github.com/Siegfried19/OrcaPresetAssistant/releases/tag/v0.6.4)
 
-便携版无需安装，主要用于独立查看面板、连接工作区和故障排查。它不包含整个定制 OrcaSlicer。完整的内嵌面板、当前项目读取、原生三种写入和自动打印建档需要按照[原生补丁说明](./native/orca/README.md)和[打包说明](./native/orca/PACKAGING.md)构建完整版本。
+便携版无需安装，主要用于独立查看面板、连接工作区和故障排查。它不包含整个定制 OrcaSlicer。内嵌面板、用户预设热刷新、当前项目读取和自动打印建档需要按照[原生补丁说明](./native/orca/README.md)和[打包说明](./native/orca/PACKAGING.md)构建完整版本。
 
 ### 安装 Codex 插件
 
@@ -89,7 +90,7 @@ Codex 默认只提供通用建议。用户可按会话选择：
 - 读取当前预设和有效参数；
 - 读取当前项目的零件摆放与 STL/3MF 几何。
 
-模型权限只覆盖当前 Orca 项目实际引用的文件，不扫描最近文件或其他目录。Orca 是项目状态与预设写入的唯一权威来源，面板不会手工生成云同步 `.info` 元数据，也不会直接覆盖官方预设。只有 JSON 的本地预设同样有效，不会因此显示结构异常。
+模型权限只覆盖当前 Orca 项目实际引用的文件，不扫描最近文件或其他目录。Orca 是当前项目和实时有效设置的权威来源；工作区文件是永久用户预设的持久来源。Codex 只在写日志后修改 process / filament 用户文件，不生成云同步身份，也不直接覆盖官方预设。历史上只有 JSON 的本地预设仍可显示，但新的受管修改必须同时校验匹配 `.info`。
 
 详细边界见[技术规格](./TECHNICAL_SPEC.md)和[架构说明](./docs/ARCHITECTURE.md)。
 
@@ -170,7 +171,7 @@ pnpm package:plugin
 
 Orca Preset Assistant is a user-preset and print-history workspace embedded in the OrcaSlicer main window. Daily use requires only two windows: Orca handles models, slicing, devices, and printing, while Codex helps review presets and propose controlled changes.
 
-> Current status: early Windows preview. The core workflows and automated tests are in place, while physical-print validation, display scaling, and compatibility with future Orca upgrades still require ongoing verification. The [v0.6.3 Release](https://github.com/Siegfried19/OrcaPresetAssistant/releases/tag/v0.6.3) includes the full custom Orca build, standalone portable panel, and Codex plugin.
+> Current status: early Windows preview. The core workflows and automated tests are in place, while physical-print validation, display scaling, and compatibility with future Orca upgrades still require ongoing verification. The [v0.6.4 Release](https://github.com/Siegfried19/OrcaPresetAssistant/releases/tag/v0.6.4) includes the full custom Orca build, standalone portable panel, and Codex plugin.
 
 ![Orca Preset Assistant English interface](./docs/images/dashboard-en.png)
 
@@ -178,7 +179,7 @@ Orca Preset Assistant is a user-preset and print-history workspace embedded in t
 
 The panel has only two top-level pages:
 
-- **User Presets**: inspect machine, process, and filament presets, review Codex proposals, and explicitly choose where a change will be written.
+- **User Presets**: inspect machine, process, and filament presets. Codex file-change records stay in the background for synchronization and verification instead of occupying the slicing panel.
 - **Print History**: archive prints automatically or manually, preserve the effective settings, and add results or notes after printing.
 
 On first use, choose a normal parent folder, not `UserPresets` itself. The app creates and manages only the structure below; an existing `AGENTS.md` is never overwritten:
@@ -200,8 +201,9 @@ Official Orca presets remain in their original Orca-managed location. They are n
 - View all three user-preset types from inside Orca.
 - Mark each preset as either **Orca Created / Managed** or **Local JSON**. A JSON-only preset remains valid.
 - See local changes per preset; initialize independent local versions in `UserPresets`, save snapshots, and safely restore an earlier version.
-- Let Codex read general context, current settings, or current-project placement and model geometry according to explicit permission.
-- Approve a change only after choosing **Current Project Only**, **Update Current Permanent Preset**, or **Save as New Permanent Preset**. The panel distinguishes visible and hidden settings and shows **Applied and Verified** only after native Orca readback.
+- For permanent process or filament presets, Codex logs the exact delta and edits the workspace files directly; Orca may be open or closed.
+- Refresh re-indexes created, modified, and deleted user presets, then hot-loads or hot-unloads them without restarting Orca. The background ledger records a loaded state only after native readback succeeds.
+- Codex reads current settings or the current project only when explicitly requested. Current-project-only changes retain the controlled Orca proposal and native verification flow.
 - Roll back the latest Orca write when no later change conflicts with it.
 - Create a print archive after a successful print submission, with an optional current-project 3MF copy.
 - Add success, issue, failure, and notes after the physical print finishes.
@@ -211,11 +213,11 @@ Machine presets are currently read-only. Automated Codex writes are limited to p
 
 ### Download and use
 
-- [Download the full custom Orca Windows x64 archive](https://github.com/Siegfried19/OrcaPresetAssistant/releases/download/v0.6.3/OrcaPresetAssistant-Orca-0.6.3-Windows-x64.zip)
-- [Download the standalone Windows x64 portable panel](https://github.com/Siegfried19/OrcaPresetAssistant/releases/download/v0.6.3/OrcaPresetAssistant-0.6.3-portable.exe)
-- [Read the v0.6.3 release notes](https://github.com/Siegfried19/OrcaPresetAssistant/releases/tag/v0.6.3)
+- [Download the full custom Orca Windows x64 archive](https://github.com/Siegfried19/OrcaPresetAssistant/releases/download/v0.6.4/OrcaPresetAssistant-Orca-0.6.4-Windows-x64.zip)
+- [Download the standalone Windows x64 portable panel](https://github.com/Siegfried19/OrcaPresetAssistant/releases/download/v0.6.4/OrcaPresetAssistant-0.6.4-portable.exe)
+- [Read the v0.6.4 release notes](https://github.com/Siegfried19/OrcaPresetAssistant/releases/tag/v0.6.4)
 
-The portable build requires no installation and is intended for standalone panel review, workspace access, and troubleshooting. It does not include the full custom OrcaSlicer build. The embedded panel, current-project access, three native write destinations, and automatic print archiving require a full build following the [native patch guide](./native/orca/README.md) and [packaging guide](./native/orca/PACKAGING.md).
+The portable build requires no installation and is intended for standalone panel review, workspace access, and troubleshooting. It does not include the full custom OrcaSlicer build. The embedded panel, user-preset hot reload, current-project access, and automatic print archiving require a full build following the [native patch guide](./native/orca/README.md) and [packaging guide](./native/orca/PACKAGING.md).
 
 ### Install the Codex plugin
 
@@ -251,7 +253,7 @@ Codex provides general advice by default. For each session, the user can choose 
 - expose the current presets and effective settings;
 - expose current-project part placement and STL/3MF geometry.
 
-Model access covers only files referenced by the currently open Orca project. It does not scan recent files or unrelated directories. Orca is the sole authority for current-project state and preset writes. The panel does not synthesize cloud-sync `.info` metadata or overwrite official presets directly. Local JSON-only presets remain valid and are not reported as structural errors.
+Model access covers only files referenced by the currently open Orca project. It does not scan recent files or unrelated directories. Orca remains authoritative for current-project state and effective live settings, while workspace files are the durable source for permanent user presets. Codex edits only logged process or filament user files, never fabricates cloud identity, and never overwrites official presets. Legacy JSON-only presets may still be displayed, but new managed changes require a matching `.info` file.
 
 See the [technical specification](./TECHNICAL_SPEC.md) and [architecture guide](./docs/ARCHITECTURE.md) for the complete boundaries.
 

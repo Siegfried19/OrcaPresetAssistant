@@ -1,10 +1,17 @@
 # 验证状态
 
-最后更新：2026-08-11
+最后更新：2026-08-14
 
 本页记录当前源码已经验证的事实，以及仍需要真实用户环境确认的项目。它不是稳定版发布声明。
 
 ## 已完成的自动化验证
+
+- v0.6.4 应用测试 88 项通过、1 项按环境跳过；TypeScript、ESLint 与 Prettier 全部通过。
+- Codex 插件 MCP 测试覆盖永久预设修改的日志先行、创建/更新身份校验、`.info` 要求与后台回执持久化。
+- Orca 原生 `[Workspace][HotReload]` 定向测试 4 个用例、37 个断言通过；完整 Preset Assistant 定向测试 12 个用例、94 个断言通过。
+- 原生 Release DLL 与 Electron helper 均成功构建；补丁 `0015-hot-reload-workspace-user-presets.patch` 已从干净产品基线完成应用检查与重放。
+- 实机在同一 Orca 进程内验证新增用户工艺刷新后出现、删除匹配 JSON/`.info` 后再次刷新消失；新增回执为 revision 2，删除验证未借助重启。
+- 桌面快捷方式调用动态启动脚本；脚本只选择构建清单声明可启动且 DLL/helper SHA-256 与实物一致的最新完整版本。
 
 - TypeScript 类型检查、ESLint、Prettier 和 Vitest 全部通过。
 - 应用测试：81 个通过，1 个按运行环境跳过；覆盖新工作区自动生成 `AGENTS.md`、已有指引不覆盖、Windows Git 路径别名识别、提案权威回读、原生 Undo 完全/部分回滚、Redo 和第三值调整识别。
