@@ -3,7 +3,6 @@ import { useMemo, useState } from 'react'
 
 import type {
   ApproveChangeProposalRequest,
-  ChangeDestination,
   ChangeProposalView,
   OrcaWriteCapabilities,
 } from '@shared/contracts'
@@ -22,14 +21,20 @@ interface ChangeProposalCardProps {
   readonly onRollback: (id: string) => Promise<void>
 }
 
-const DESTINATIONS: readonly ChangeDestination[] = [
-  'current-project',
-  'update-current-preset',
-  'save-as-new-preset',
-]
-
 function valueText(value: unknown): string {
   return value === null ? 'null' : typeof value === 'string' ? value : JSON.stringify(value)
+}
+
+export function proposalApprovalRequest(
+  proposal: ChangeProposalView,
+): ApproveChangeProposalRequest {
+  return {
+    id: proposal.id,
+    destination: proposal.destination,
+    ...(proposal.destination === 'save-as-new-preset' && proposal.newPresetName
+      ? { newPresetName: proposal.newPresetName }
+      : {}),
+  }
 }
 
 export function ChangeProposalCard({
@@ -41,10 +46,6 @@ export function ChangeProposalCard({
   onRollback,
 }: ChangeProposalCardProps): React.JSX.Element {
   const { t } = useI18n()
-  const [destination, setDestination] = useState<ChangeDestination>(
-    proposal?.destination ?? 'current-project',
-  )
-  const [newPresetName, setNewPresetName] = useState(proposal?.newPresetName ?? '')
   const [pendingAction, setPendingAction] = useState<'approve' | 'reject' | 'rollback' | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
 
@@ -73,18 +74,10 @@ export function ChangeProposalCard({
   const visibleChange = displayChange ?? { before: proposal.before, after: proposal.after }
 
   const approve = async (): Promise<void> => {
-    if (destination === 'save-as-new-preset' && !newPresetName.trim()) {
-      setFormError(t('proposal.nameRequired'))
-      return
-    }
     setPendingAction('approve')
     setFormError(null)
     try {
-      await onApprove({
-        id: proposal.id,
-        destination,
-        ...(destination === 'save-as-new-preset' ? { newPresetName: newPresetName.trim() } : {}),
-      })
+      await onApprove(proposalApprovalRequest(proposal))
     } catch {
       setFormError(t('proposal.approveFailed'))
     } finally {
@@ -187,34 +180,20 @@ export function ChangeProposalCard({
           <>
             <fieldset className="proposal-destinations">
               <legend>{t('proposal.destination')}</legend>
-              {DESTINATIONS.map((value) => (
-                <label key={value}>
-                  <input
-                    checked={destination === value}
-                    disabled={pendingAction !== null}
-                    name={`proposal-destination-${proposal.id}`}
-                    onChange={() => setDestination(value)}
-                    type="radio"
-                  />
-                  <span>
-                    <strong>{t(`proposal.destination.${value}`)}</strong>
-                    <small>{t(`proposal.destination.${value}.body`)}</small>
-                  </span>
-                </label>
-              ))}
-            </fieldset>
-            {destination === 'save-as-new-preset' && (
-              <label className="proposal-name-field">
-                <span>{t('proposal.newName')}</span>
+              <label>
                 <input
-                  disabled={pendingAction !== null}
-                  maxLength={160}
-                  onChange={(event) => setNewPresetName(event.target.value)}
-                  placeholder={t('proposal.newNamePlaceholder')}
-                  value={newPresetName}
+                  checked
+                  disabled
+                  name={`proposal-destination-${proposal.id}`}
+                  readOnly
+                  type="radio"
                 />
+                <span>
+                  <strong>{t(`proposal.destination.${proposal.destination}`)}</strong>
+                  <small>{t(`proposal.destination.${proposal.destination}.body`)}</small>
+                </span>
               </label>
-            )}
+            </fieldset>
             {formError && <div className="form-error proposal-form-error">{formError}</div>}
             <div className="proposal-actions">
               <button

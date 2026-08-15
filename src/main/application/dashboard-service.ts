@@ -27,6 +27,7 @@ import type {
 } from '@shared/contracts'
 import type {
   CompleteChangeProposalRequest,
+  CompletePresetFileChangeRequest,
   OrcaPrintArchiveRequest,
   PrepareProjectExportResult,
   PublishNativeStateRequest,
@@ -55,6 +56,7 @@ import {
 } from '../infrastructure/git-service'
 import { findOrcaExecutable, launchDetached } from '../infrastructure/orca-service'
 import { NativeStateStore } from '../infrastructure/native-state-store'
+import { PresetFileChangeStore } from '../infrastructure/preset-file-change-store'
 import { scanPresets } from '../infrastructure/preset-repository'
 import {
   applyLatestPrints,
@@ -103,6 +105,7 @@ function snapshotSignature(snapshot: DashboardSnapshot): string {
     warnings: snapshot.warnings,
     settings: snapshot.settings,
     changeProposals: snapshot.changeProposals,
+    presetFileChanges: snapshot.presetFileChanges,
     printHistory: snapshot.printHistory,
     presets: snapshot.presets.map((preset) => ({
       id: preset.id,
@@ -119,6 +122,7 @@ function snapshotSignature(snapshot: DashboardSnapshot): string {
 export class DashboardService {
   private readonly configStore: ConfigStore
   private readonly proposalStore: ChangeProposalStore
+  private readonly presetFileChangeStore: PresetFileChangeStore
   private readonly codexSessionStore: CodexSessionStore
   private readonly nativeStateStore: NativeStateStore
   private config: AppConfig = DEFAULT_APP_CONFIG
@@ -133,6 +137,7 @@ export class DashboardService {
   public constructor(userDataPath: string) {
     this.configStore = new ConfigStore(userDataPath)
     this.proposalStore = new ChangeProposalStore(userDataPath)
+    this.presetFileChangeStore = new PresetFileChangeStore(userDataPath)
     this.codexSessionStore = new CodexSessionStore(userDataPath)
     this.nativeStateStore = new NativeStateStore(userDataPath)
   }
@@ -382,6 +387,11 @@ export class DashboardService {
     return this.proposalStore.complete(request)
   }
 
+  public async completePresetFileChange(request: CompletePresetFileChangeRequest) {
+    if (!this.root) throw appError('workspace-not-connected')
+    return this.presetFileChangeStore.complete(workspacePaths(this.root.path).userPresets, request)
+  }
+
   public async publishNativeState(
     request: PublishNativeStateRequest,
   ): Promise<PublishedNativeState> {
@@ -513,6 +523,8 @@ export class DashboardService {
         return false
       }
     })
+    await this.presetFileChangeStore.importInbox()
+    const presetFileChanges = await this.presetFileChangeStore.reconcileDisk(paths.userPresets)
     const changeProposals = await this.proposalStore.list()
 
     const warnings: DashboardWarning[] = []
@@ -543,6 +555,7 @@ export class DashboardService {
       settings: settingsView(this.config, this.sessionCodexScope),
       writeCapabilities: nativeState?.writeCapabilities ?? null,
       changeProposals,
+      presetFileChanges,
       warnings,
     }
 
@@ -576,6 +589,7 @@ export class DashboardService {
       settings: settingsView(this.config, this.sessionCodexScope),
       writeCapabilities: null,
       changeProposals: [],
+      presetFileChanges: [],
       warnings: ['workspace-not-found'],
     }
   }

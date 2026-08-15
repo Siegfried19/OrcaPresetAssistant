@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -6,7 +6,7 @@ const LIVE_MAX_AGE_MS = 10_000
 const SESSION_MAX_AGE_MS = 10_000
 const PRESET_KINDS = new Set(['machine', 'process', 'filament'])
 const WRITABLE_PRESET_KINDS = new Set(['process', 'filament'])
-const DESTINATIONS = new Set(['current-project', 'update-current-preset', 'save-as-new-preset'])
+const DESTINATIONS = new Set(['current-project'])
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, ''))
 }
@@ -100,7 +100,7 @@ function listJsonFiles(directory) {
 }
 
 export function listPresets(kind) {
-  const status = requireScope('current-settings')
+  const { status } = fileChangeWorkspace()
   if (kind !== undefined && !PRESET_KINDS.has(kind)) {
     throw new Error('kind must be machine, process, or filament.')
   }
@@ -232,7 +232,9 @@ function parameterSnapshot(value) {
 export function queuePresetChange(input) {
   requireScope('current-settings')
   if (!DESTINATIONS.has(input?.destination)) {
-    throw new Error('Choose one valid destination.')
+    throw new Error(
+      'queue_preset_change only supports current-project; use log_user_preset_file_change for permanent user presets.',
+    )
   }
   if (!WRITABLE_PRESET_KINDS.has(input?.presetKind)) {
     throw new Error(
@@ -271,20 +273,14 @@ export function queuePresetChange(input) {
   ) {
     throw new Error('The proposal must change at least one parameter.')
   }
-  if (input.destination === 'save-as-new-preset' && !String(input.newPresetName ?? '').trim()) {
-    throw new Error('newPresetName is required when saving a new preset.')
-  }
-  if (input.destination !== 'save-as-new-preset' && input.newPresetName !== undefined) {
-    throw new Error('newPresetName is only valid when saving a new preset.')
+  if (input.newPresetName !== undefined) {
+    throw new Error('newPresetName is not valid for a current-project change.')
   }
 
   const request = {
     destination: input.destination,
     presetKind: input.presetKind,
     presetId: input.presetId,
-    ...(input.destination === 'save-as-new-preset'
-      ? { newPresetName: String(input.newPresetName).trim() }
-      : {}),
     before: input.before,
     after: input.after,
     reason: input.reason.trim(),
@@ -306,5 +302,177 @@ export function queuePresetChange(input) {
     status: 'pending-panel-approval',
     destination: request.destination,
     requestedRevision: request.requestedRevision,
+  }
+}
+
+function fileChangeWorkspace() {
+  const status = accessStatus()
+  if (!status.connected || !status.workspace || !path.isAbsolute(status.workspace)) {
+    throw new Error('Select a workspace in Orca Preset Assistant first.')
+  }
+  return { status, state: findState() }
+}
+
+function validPresetName(value) {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 256 &&
+    value === value.trim() &&
+    !/[\\/:*?"<>|]/u.test(value)
+  )
+}
+
+function fileParameterMap(value) {
+  return (
+    value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.keys(value).length > 0 &&
+    Object.entries(value).every(
+      ([key, item]) => /^[A-Za-z0-9_]+$/u.test(key) && parameterValue(item),
+    )
+  )
+}
+
+function readPresetFile(filePath) {
+  const fileStat = fs.lstatSync(filePath)
+  if (!fileStat.isFile() || fileStat.isSymbolicLink()) {
+    throw new Error('The preset JSON must be a regular file.')
+  }
+  const content = fs.readFileSync(filePath)
+  const value = JSON.parse(content.toString('utf8').replace(/^\uFEFF/u, ''))
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('The preset JSON root must be an object.')
+  }
+  return {
+    value,
+    hash: createHash('sha256').update(content).digest('hex'),
+  }
+}
+
+function requireInfoFile(jsonPath) {
+  const infoPath = jsonPath.slice(0, -path.extname(jsonPath).length) + '.info'
+  const infoStat = fs.lstatSync(infoPath)
+  if (!infoStat.isFile() || infoStat.isSymbolicLink()) {
+    throw new Error('The preset must have a matching .info file.')
+  }
+  return infoPath
+}
+
+export function logUserPresetFileChange(input) {
+  if (input?.operation !== 'create' && input?.operation !== 'update') {
+    throw new Error('operation must be create or update.')
+  }
+  if (!WRITABLE_PRESET_KINDS.has(input?.presetKind)) {
+    throw new Error('Direct user-preset file changes support process or filament presets.')
+  }
+  if (!validPresetName(input?.presetName)) {
+    throw new Error('presetName must be a valid preset filename stem.')
+  }
+  if (!fileParameterMap(input?.changes)) {
+    throw new Error('changes must be a non-empty parameter map.')
+  }
+  if (typeof input?.reason !== 'string' || !input.reason.trim() || input.reason.length > 2000) {
+    throw new Error('A reason of at most 2,000 characters is required.')
+  }
+  const removedKeys = input.remove ?? []
+  if (
+    !Array.isArray(removedKeys) ||
+    removedKeys.some((key) => typeof key !== 'string' || !/^[A-Za-z0-9_]+$/u.test(key)) ||
+    new Set(removedKeys).size !== removedKeys.length ||
+    removedKeys.some((key) => Object.prototype.hasOwnProperty.call(input.changes, key))
+  ) {
+    throw new Error('remove must contain unique parameter keys that are not also in changes.')
+  }
+  if (
+    input.sourcePresetName !== undefined &&
+    (input.operation !== 'create' || !validPresetName(input.sourcePresetName))
+  ) {
+    throw new Error('sourcePresetName is only valid for create and must be a valid preset name.')
+  }
+
+  const { status, state } = fileChangeWorkspace()
+  const presetRoot = path.join(status.workspace, 'UserPresets')
+  const kindRoot = path.join(presetRoot, input.presetKind)
+  const relativePath = `${input.presetKind}/${input.presetName}.json`
+  const targetPath = path.join(kindRoot, `${input.presetName}.json`)
+  const infoPath = targetPath.slice(0, -5) + '.info'
+  const targetExists = fs.existsSync(targetPath)
+  if (input.operation === 'update' && !targetExists) {
+    throw new Error('The user preset to update does not exist.')
+  }
+  if (input.operation === 'create' && targetExists) {
+    throw new Error('The new user preset already exists.')
+  }
+
+  let sourceRelativePath
+  let sourceData = null
+  let beforeFileHash = null
+  if (input.operation === 'update') {
+    const target = readPresetFile(targetPath)
+    requireInfoFile(targetPath)
+    sourceData = target.value
+    beforeFileHash = target.hash
+  } else if (input.sourcePresetName !== undefined) {
+    const sourcePath = path.join(kindRoot, `${input.sourcePresetName}.json`)
+    const source = readPresetFile(sourcePath)
+    requireInfoFile(sourcePath)
+    sourceData = source.value
+    sourceRelativePath = `${input.presetKind}/${input.sourcePresetName}.json`
+  }
+
+  const keys = [...Object.keys(input.changes), ...removedKeys]
+  const before = {}
+  const after = {}
+  let changed = false
+  for (const key of keys) {
+    const present = sourceData && Object.prototype.hasOwnProperty.call(sourceData, key)
+    before[key] = present ? sourceData[key] : null
+    if (removedKeys.includes(key)) {
+      after[key] = null
+      changed ||= Boolean(present)
+    } else {
+      after[key] = input.changes[key]
+      changed ||= JSON.stringify(before[key]) !== JSON.stringify(after[key])
+    }
+  }
+  if (!changed) throw new Error('The logged operation must change at least one parameter.')
+
+  const request = {
+    operation: input.operation,
+    presetKind: input.presetKind,
+    presetName: input.presetName,
+    relativePath,
+    ...(sourceRelativePath ? { sourceRelativePath } : {}),
+    before,
+    after,
+    removedKeys,
+    reason: input.reason.trim(),
+    beforeFileHash,
+  }
+  const inbox = path.join(state.userDataPath, 'preset-file-change-inbox')
+  fs.mkdirSync(inbox, { recursive: true })
+  const id = randomUUID()
+  const finalPath = path.join(inbox, `${id}.json`)
+  const temporaryPath = `${finalPath}.tmp`
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(request, null, 2)}\n`, {
+    encoding: 'utf8',
+    flag: 'wx',
+  })
+  fs.renameSync(temporaryPath, finalPath)
+  return {
+    id,
+    status: 'logged-before-write',
+    operation: request.operation,
+    presetKind: request.presetKind,
+    presetName: request.presetName,
+    relativePath: request.relativePath,
+    targetJsonPath: targetPath,
+    targetInfoPath: infoPath,
+    ...(sourceRelativePath ? { sourceRelativePath } : {}),
+    before: request.before,
+    after: request.after,
+    removedKeys: request.removedKeys,
   }
 }

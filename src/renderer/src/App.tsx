@@ -30,6 +30,7 @@ import { VersionStatusBar } from './components/VersionStatusBar'
 import { useDashboard } from './hooks/use-dashboard'
 import { useI18n } from './i18n/I18nProvider'
 import { createTranslator, warningTranslationKey, type TranslationKey } from './i18n/messages'
+import { proposalTargetName, resolveInspectorSelection } from './lib/inspector-selection'
 import { latestProposal } from './lib/proposal-summary'
 import type { PrimaryPage, ViewFilter } from './types'
 
@@ -53,6 +54,7 @@ export function App(): React.JSX.Element {
   const [filter, setFilter] = useState<ViewFilter>('all')
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null)
   const [recordOpen, setRecordOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
@@ -96,28 +98,16 @@ export function App(): React.JSX.Element {
     if (savedLanguage && savedLanguage !== language) setLanguage(savedLanguage)
   }, [dashboard.snapshot?.settings.language, language, setLanguage])
 
-  const selectedPreset = visiblePresets.find((preset) => preset.id === selectedId) ?? null
-  const presetProposals =
-    dashboard.snapshot?.changeProposals.filter(
-      (proposal) => proposal.presetId === selectedPreset?.id,
-    ) ?? []
-  const latestVisibleProposal = latestProposal(dashboard.snapshot?.changeProposals ?? [])
-  const selectedProposal =
-    presetProposals.find(
-      (proposal) => proposal.status === 'pending' && proposal.approvedAt === null,
-    ) ??
-    presetProposals.find((proposal) => proposal.status === 'pending') ??
-    presetProposals[0] ??
-    null
-  const proposalTargetName = selectedProposal
-    ? (dashboard.snapshot?.presets.find((preset) => preset.id === selectedProposal.presetId)
-        ?.name ?? selectedProposal.presetId)
-    : null
+  const changeProposals = dashboard.snapshot?.changeProposals ?? []
+  const latestVisibleProposal = latestProposal(changeProposals)
+  const {
+    preset: selectedPreset,
+    proposal: selectedProposal,
+    proposalTargetName: selectedProposalTargetName,
+  } = resolveInspectorSelection(visiblePresets, changeProposals, selectedId, selectedProposalId)
   const latestVisibleTargetName = latestVisibleProposal
-    ? (dashboard.snapshot?.presets.find((preset) => preset.id === latestVisibleProposal.presetId)
-        ?.name ?? latestVisibleProposal.presetId)
+    ? proposalTargetName(latestVisibleProposal, dashboard.snapshot?.presets ?? [])
     : null
-
   const refresh = async (): Promise<void> => {
     setRefreshing(true)
     try {
@@ -272,6 +262,7 @@ export function App(): React.JSX.Element {
             onOpenRoot={() => void dashboard.openRoot()}
             onPageChange={(nextPage) => {
               setSelectedId(null)
+              setSelectedProposalId(null)
               setPage(nextPage)
             }}
             page={page}
@@ -347,7 +338,8 @@ export function App(): React.JSX.Element {
                         setFilter('all')
                         setQuery('')
                         setShowChanged(false)
-                        setSelectedId(latestVisibleProposal.presetId)
+                        setSelectedId(null)
+                        setSelectedProposalId(latestVisibleProposal.id)
                       }}
                       proposal={latestVisibleProposal}
                       targetName={latestVisibleTargetName}
@@ -412,7 +404,10 @@ export function App(): React.JSX.Element {
                       ))}
                     </div>
                     <PresetList
-                      onSelect={setSelectedId}
+                      onSelect={(presetId) => {
+                        setSelectedProposalId(null)
+                        setSelectedId(presetId)
+                      }}
                       presets={visiblePresets}
                       selectedId={selectedPreset?.id ?? null}
                     />
@@ -420,13 +415,16 @@ export function App(): React.JSX.Element {
                 </div>
               </main>
 
-              {selectedPreset && (
+              {(selectedPreset || selectedProposal) && (
                 <Inspector
                   onApproveProposal={async (request) => {
                     await dashboard.approveChangeProposal(request)
                     setToast(t('toast.proposalApproved'))
                   }}
-                  onClose={() => setSelectedId(null)}
+                  onClose={() => {
+                    setSelectedId(null)
+                    setSelectedProposalId(null)
+                  }}
                   onRecord={() => setRecordOpen(true)}
                   onRejectProposal={async (id) => {
                     await dashboard.rejectChangeProposal(id)
@@ -439,7 +437,7 @@ export function App(): React.JSX.Element {
                   onShowDiff={(presetId) => void showDiff(presetId)}
                   preset={selectedPreset}
                   proposal={selectedProposal}
-                  proposalTargetName={proposalTargetName}
+                  proposalTargetName={selectedProposalTargetName}
                   writeCapabilities={snapshot.writeCapabilities}
                 />
               )}

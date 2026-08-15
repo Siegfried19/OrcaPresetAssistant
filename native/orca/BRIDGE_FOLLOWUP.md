@@ -4,9 +4,9 @@
 
 ## 角色边界
 
-- Orca 原生桥接：项目状态、预设选择与写入、项目副本导出、成功提交打印事件的唯一权威。
-- 无窗口 helper：正式 React 页面、本地工作区、提案队列、打印历史持久化。
-- Codex：在用户许可范围内读取状态或模型，并提出修改建议。
+- Orca 原生桥接：当前项目状态与写入、有效设置、用户预设热加载、项目副本导出和成功提交打印事件的权威来源。
+- 无窗口 helper：正式 React 页面、本地工作区、文件修改日志、当前项目提案队列和打印历史持久化。
+- Codex：按用户明确要求读取状态或模型；永久用户预设先记录再直写，当前项目修改提交提案。
 - 诊断 bootstrap：helper 缺失或启动失败时的 fallback，不是正式面板。
 - Electron preload、PluginHost、Python 插件和 MCP 不承载 Orca 面板权威写入。
 
@@ -89,7 +89,9 @@ workspace = C:\OrcaPresetWorkspace
 
 ### `presets.refresh`
 
-当前明确返回 `RESTART_REQUIRED`。重复 `load_user_presets()` 会跳过同名预设，不能包装成刷新成功。
+`0015-hot-reload-workspace-user-presets.patch` 已把这一入口升级为定向热刷新。请求必须列出已由 helper 记录并验证落盘的目标、参数键和继承字段；原生端逐项验证工作区路径、JSON / `.info`、身份一致性并在临时副本上解析。
+
+新增目标加入内存列表，已有目标按名称替换；未选中目标不改变当前选择。若目标是当前所选预设且 Orca 内有未保存编辑，该目标会返回冲突并保留磁盘写入状态，用户处理临时编辑后可再次刷新。只有成功目标返回新 revision 和原生回读值。
 
 ## 提案写入
 
@@ -114,11 +116,8 @@ workspace = C:\OrcaPresetWorkspace
 
 - `approvedAt` 必须非空，表示面板已经明确批准。
 - `expectedPresetName` 必须与 Orca 此刻选中的预设完全一致；否则返回 `PRESET_SELECTION_CHANGED`。
-- destination 只有：
-  - `current-project`
-  - `update-current-preset`
-  - `save-as-new-preset`
-- 永久写入要求外部工作区已经生效。
+- 原生兼容层仍接受 `current-project`、`update-current-preset` 和 `save-as-new-preset`，但当前产品只通过此接口提交 `current-project`；永久用户预设改用文件修改日志和 `presets.refresh`。
+- 旧永久写入兼容路径要求外部工作区已经生效。
 - 覆盖目标必须是可覆盖的用户预设；系统/default/project/external 预设受保护。
 - 另存名称必须安全且不能重名。
 - 先验证整个 changes，再一次应用；保存后验证 JSON、`.info`、路径和实际值。
@@ -205,7 +204,7 @@ PrintJob 只有在设备提交成功后才通过 `wxGetApp().CallAfter` 把事�
 4. session token 不写入 ready 文件；语言 query 插在 `#session` fragment 之前。
 5. 三种 destination 对白名单内 process/filament 参数均返回 `presetType` 和 Orca 权威 before/after。
 6. 新永久预设回滚后仍在磁盘，只切回原预设。
-7. `presets.refresh` 在安全热重载完成前明确要求重启。
+7. `presets.refresh` 只加载请求中精确列出的工作区 process / filament 用户预设；未保存的当前预设编辑、非法路径、身份不一致和解析错误均不得覆盖内存状态。
 8. placement 摘要不含 mesh 和源文件路径。
 9. 自动建档只在打印提交成功后触发；3MF 策略没有假成功。
 10. helper 缺失时只显示诊断 fallback，不宣称最终面板就绪。

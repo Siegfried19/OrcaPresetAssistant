@@ -46,6 +46,8 @@ export type ChangeProposalStatus =
   | 'partially-rolled-back'
   | 'changed-after-apply'
   | 'rolled-back'
+export type PresetFileOperation = 'create' | 'update'
+export type PresetFileChangeStatus = 'planned' | 'written' | 'loaded' | 'conflict'
 export type ParameterValue = string | number | boolean | readonly ParameterValue[] | null
 export type ParameterSnapshot = Readonly<Record<string, ParameterValue>>
 export type ParameterValueShape = 'scalar' | 'scalar-or-vector'
@@ -280,6 +282,26 @@ export interface ChangeProposalView {
   readonly error: string | null
 }
 
+export interface PresetFileChangeView {
+  readonly id: string
+  readonly createdAt: string
+  readonly updatedAt: string
+  readonly operation: PresetFileOperation
+  readonly presetKind: 'process' | 'filament'
+  readonly presetName: string
+  readonly relativePath: string
+  readonly sourceRelativePath: string | null
+  readonly before: ParameterSnapshot
+  readonly after: ParameterSnapshot
+  readonly removedKeys: readonly string[]
+  readonly reason: string
+  readonly status: PresetFileChangeStatus
+  readonly beforeFileHash: string | null
+  readonly writtenFileHash: string | null
+  readonly authoritativeRevision: string | null
+  readonly error: string | null
+}
+
 export interface RollbackGuardView {
   readonly id: string
   readonly validAtRevision: string
@@ -294,6 +316,7 @@ export interface DashboardSnapshot {
   readonly settings: AppSettingsView
   readonly writeCapabilities: OrcaWriteCapabilities | null
   readonly changeProposals: readonly ChangeProposalView[]
+  readonly presetFileChanges: readonly PresetFileChangeView[]
   readonly warnings: readonly DashboardWarning[]
 }
 

@@ -7,6 +7,7 @@ import {
   parseNativeEnvelope,
   readOrcaProject,
   readOrcaSettings,
+  refreshOrcaUserPresets,
   resolveOrcaNativeBridge,
   rollbackOrcaProposal,
 } from './orca-native-bridge'
@@ -211,5 +212,175 @@ describe('Orca native bridge boundary', () => {
       data: { effective: { layer_height: '0.18' } },
     })
     expect(request).toHaveBeenCalledWith('settings.get', { authorization: 'settings:read' })
+  })
+
+  it('refreshes only logged written user presets and accepts native readback', async () => {
+    const request = vi.fn().mockResolvedValue({
+      requestId: 'refresh-1',
+      ok: true,
+      revision: 16,
+      data: {
+        authority: 'orca',
+        status: 'synchronized',
+        targets: [
+          {
+            id: 'change-1',
+            presetKind: 'process',
+            presetName: 'Quality_ai_suggestion',
+            relativePath: 'process/Quality_ai_suggestion.json',
+            created: false,
+            selected: false,
+            values: { outer_wall_speed: '55' },
+            absentKeys: ['top_surface_speed'],
+          },
+        ],
+        removed: [],
+      },
+    })
+
+    await expect(
+      refreshOrcaUserPresets({ available: true, revision: 15, request }, [
+        {
+          id: 'change-1',
+          createdAt: '2026-08-12T12:00:00.000Z',
+          updatedAt: '2026-08-12T12:01:00.000Z',
+          operation: 'update',
+          presetKind: 'process',
+          presetName: 'Quality_ai_suggestion',
+          relativePath: 'process/Quality_ai_suggestion.json',
+          sourceRelativePath: null,
+          before: { outer_wall_speed: '60', top_surface_speed: '50' },
+          after: { outer_wall_speed: '55', top_surface_speed: null },
+          removedKeys: ['top_surface_speed'],
+          reason: 'Reduce surface drag.',
+          status: 'written',
+          beforeFileHash: 'before',
+          writtenFileHash: 'after',
+          authoritativeRevision: null,
+          error: null,
+        },
+      ]),
+    ).resolves.toMatchObject({ revision: 16, data: { status: 'synchronized' } })
+    expect(request).toHaveBeenCalledWith('presets.refresh', {
+      targets: [
+        {
+          id: 'change-1',
+          presetKind: 'process',
+          presetName: 'Quality_ai_suggestion',
+          relativePath: 'process/Quality_ai_suggestion.json',
+          keys: ['outer_wall_speed', 'top_surface_speed'],
+          removedKeys: ['top_surface_speed'],
+        },
+      ],
+    })
+  })
+
+  it('requests a workspace synchronization even without written change records', async () => {
+    const request = vi.fn().mockResolvedValue({
+      requestId: 'refresh-2',
+      ok: true,
+      revision: 17,
+      data: {
+        authority: 'orca',
+        status: 'synchronized',
+        targets: [],
+        removed: [
+          {
+            presetKind: 'process',
+            presetName: 'Deleted probe',
+            relativePath: 'process/Deleted probe.json',
+            selected: false,
+            replacementPreset: null,
+          },
+        ],
+      },
+    })
+
+    await expect(
+      refreshOrcaUserPresets({ available: true, revision: 16, request }, []),
+    ).resolves.toMatchObject({
+      revision: 17,
+      data: { removed: [{ presetName: 'Deleted probe' }] },
+    })
+    expect(request).toHaveBeenCalledWith('presets.refresh', { targets: [] })
+  })
+
+  it('batches more than 32 written changes while preserving every native receipt', async () => {
+    const changes = Array.from({ length: 33 }, (_, index) => ({
+      id: `change-${index + 1}`,
+      createdAt: '2026-08-12T12:00:00.000Z',
+      updatedAt: '2026-08-12T12:01:00.000Z',
+      operation: 'update' as const,
+      presetKind: 'process' as const,
+      presetName: `Quality ${index + 1}`,
+      relativePath: `process/Quality ${index + 1}.json`,
+      sourceRelativePath: null,
+      before: { outer_wall_speed: '60' },
+      after: { outer_wall_speed: '55' },
+      removedKeys: [],
+      reason: 'Reduce surface drag.',
+      status: 'written' as const,
+      beforeFileHash: 'before',
+      writtenFileHash: 'after',
+      authoritativeRevision: null,
+      error: null,
+    }))
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        requestId: 'refresh-3a',
+        ok: true,
+        revision: 18,
+        data: {
+          authority: 'orca',
+          status: 'synchronized',
+          targets: changes.slice(0, 32).map((change) => ({
+            id: change.id,
+            presetKind: change.presetKind,
+            presetName: change.presetName,
+            relativePath: change.relativePath,
+            created: false,
+            selected: false,
+            values: change.after,
+            absentKeys: [],
+          })),
+          removed: [],
+        },
+      })
+      .mockResolvedValueOnce({
+        requestId: 'refresh-3b',
+        ok: true,
+        revision: 19,
+        data: {
+          authority: 'orca',
+          status: 'synchronized',
+          targets: changes.slice(32).map((change) => ({
+            id: change.id,
+            presetKind: change.presetKind,
+            presetName: change.presetName,
+            relativePath: change.relativePath,
+            created: false,
+            selected: false,
+            values: change.after,
+            absentKeys: [],
+          })),
+          removed: [],
+        },
+      })
+
+    await expect(
+      refreshOrcaUserPresets({ available: true, revision: 17, request }, changes),
+    ).resolves.toMatchObject({
+      requestId: 'refresh-3b',
+      revision: 19,
+      data: {
+        targets: expect.arrayContaining(
+          changes.map((change) => expect.objectContaining({ id: change.id })),
+        ),
+      },
+    })
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(request.mock.calls[0]?.[1]).toMatchObject({ targets: { length: 32 } })
+    expect(request.mock.calls[1]?.[1]).toMatchObject({ targets: { length: 1 } })
   })
 })

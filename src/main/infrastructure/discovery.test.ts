@@ -35,7 +35,7 @@ describe('workspace discovery', () => {
       'process',
     ])
     expect(await readFile(join(paths.userPresets, 'AGENTS.md'), 'utf8')).toContain(
-      'Treat a change as successful only after Orca returns an authoritative receipt',
+      'Log the exact process or filament before/after values',
     )
     expect(await readdir(paths.printHistory)).toEqual([])
     expect(await isWorkspaceRoot(root)).toBe(true)

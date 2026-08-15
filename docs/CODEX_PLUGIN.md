@@ -28,7 +28,8 @@
 - 只需要通用建议：保持“通用建议”，Codex 不读取 Orca 数据。
 - 需要参数诊断：授权“当前设置”，可读当前机器、工艺、材料和实际有效参数，但不读模型。
 - 需要分析零件：授权“当前项目”，可读本次会话的零件摆放和支持的 STL/3MF 几何。
-- 需要修改参数：告诉 Codex问题和目标。最终应用时仍必须在 Orca 中选择“仅当前项目 / 更新当前永久预设 / 另存为新永久预设”。
+- 需要更新或新建永久用户预设：告诉 Codex 目标预设、修改和理由。Codex 先记录差异，再直接修改工作区文件；Orca 可开可关，也不会要求第二次接受。
+- 只有需要读取实时有效值或只修改当前项目时，才明确要求 Codex 读取当前设置。当前项目修改继续在面板中确认。
 
 示例：
 
@@ -50,7 +51,7 @@
 
 如果希望 Codex 直接协助维护 Git，请把 `<Workspace>\UserPresets` 作为 Codex 任务文件夹打开，并明确说要检查、保存或同步哪些内容。面板不会展示 `AGENTS.md`、`CHANGELOG.md` 等 AI 工作说明。
 
-首次选择普通父文件夹时，软件会自动建立标准目录并在不存在时创建 `UserPresets\AGENTS.md`。插件必须先读取 Orca 返回的 `writeCapabilities`，不维护第二份白名单；隐藏参数会明确说明没有可见面板控件，写入成功只以 Orca 原生回执和新版本回读为准。
+首次选择普通父文件夹时，软件会自动建立标准目录并在不存在时创建 `UserPresets\AGENTS.md`。永久 process / filament 用户预设必须先在后台记录再写文件；刷新后只有 Orca 原生热加载回执与回读都匹配，后台记录才进入“Orca 已加载”，切片面板不会增加文件修改卡片。当前项目临时修改仍先读取 Orca 返回的 `writeCapabilities`，不维护第二份白名单；隐藏参数会明确说明没有可见面板控件。
 
 ### 更新或卸载
 
@@ -88,7 +89,8 @@ When building the plugin from source, run `pnpm package:plugin` at the repositor
 - For general advice, keep **General Advice** selected. Codex reads no Orca data.
 - For parameter diagnosis, allow **Current Settings**. Codex can read the active machine, process, filaments, and effective settings, but not model data.
 - For part analysis, allow **Current Project**. Codex can read session-scoped placement and supported STL/3MF geometry.
-- For a parameter change, describe the problem and goal. Orca still requires an explicit final destination: **Current Project Only / Update Current Permanent Preset / Save as New Permanent Preset**.
+- To update or create a permanent user preset, describe the target, changes, and reason. Codex logs the exact file delta first and then edits the workspace files directly; Orca may be open or closed, and there is no second approval step.
+- Ask Codex to read live settings only when you need effective current values or a current-project-only change. Current-project changes still require panel confirmation.
 
 Examples:
 
@@ -109,6 +111,8 @@ The panel can initialize an independent local Git repository at `<Workspace>\Use
 - The panel has no GitHub, push, pull, branch, or remote-management UI.
 
 To ask Codex for direct Git help, open `<Workspace>\UserPresets` as the Codex task folder and explicitly state what should be inspected, saved, or synchronized. AI-only files such as `AGENTS.md` and `CHANGELOG.md` are not shown in the panel.
+
+Permanent process and filament changes are logged before the JSON and matching `.info` are written. The panel refresh button re-indexes both new and modified presets; when embedded in a running Orca instance, it hot-loads only the logged targets and marks them loaded only after native readback matches. Current-project-only proposals continue to use Orca's authoritative `writeCapabilities`.
 
 When a normal parent folder is first selected, the app creates the standard structure and adds `UserPresets\AGENTS.md` only if it does not exist. The plugin must read Orca's `writeCapabilities` instead of maintaining a second allowlist. Hidden settings are identified as having no visible panel control, and success requires both a native Orca receipt and fresh-revision readback.
 

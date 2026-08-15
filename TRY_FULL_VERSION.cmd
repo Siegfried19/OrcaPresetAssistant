@@ -2,12 +2,12 @@
 setlocal
 cd /d "%~dp0"
 
-set "ORCA_EXE=%~dp0FullVersion\OrcaPresetAssistant-Orca-0.6.2-Windows-x64\orca-slicer.exe"
-if not exist "%ORCA_EXE%" (
-  echo [ERROR] Full version was not found:
-  echo %ORCA_EXE%
+set "LATEST_LAUNCHER=%~dp0Launch-Latest-Orca.ps1"
+if not exist "%LATEST_LAUNCHER%" (
+  echo [ERROR] Latest full-version launcher was not found:
+  echo %LATEST_LAUNCHER%
   pause
   exit /b 1
 )
 
-start "" "%ORCA_EXE%"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%LATEST_LAUNCHER%"

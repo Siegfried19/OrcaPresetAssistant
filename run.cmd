@@ -2,9 +2,9 @@
 setlocal
 cd /d "%~dp0"
 
-set "PACKAGED_ORCA=%~dp0FullVersion\OrcaPresetAssistant-Orca-0.6.2-Windows-x64\orca-slicer.exe"
-if exist "%PACKAGED_ORCA%" (
-  start "" "%PACKAGED_ORCA%"
+set "LATEST_LAUNCHER=%~dp0Launch-Latest-Orca.ps1"
+if exist "%LATEST_LAUNCHER%" (
+  start "" powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%LATEST_LAUNCHER%"
   exit /b 0
 )
 
